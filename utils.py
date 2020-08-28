@@ -3,7 +3,7 @@ import torch
 #from datasets.rsna import RSNADataset
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader, SubsetRandomSampler, SequentialSampler
-from torchvision.datasets import MNIST, CIFAR10, CIFAR100, SVHN
+from torchvision.datasets import MNIST, CIFAR10, CIFAR100, SVHN, ImageNet
 import torchvision.datasets
 import torch.nn as nn
 from collections import OrderedDict
@@ -12,6 +12,8 @@ import re
 import PIL
 import math
 import os
+import numpy as np
+import argparse
 
 
 
@@ -30,7 +32,7 @@ def pad_collate_fn(batch):
 
 
 
-def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=None, normalize=False, transform=None):
+def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=None, normalize=False, transform=None, shuffle=0):
 
 
     num_chs = 1 if dataset.lower() in [ 'rsna', 'mnist' ] else 3
@@ -55,6 +57,11 @@ def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=None, 
         raise NotImplementedError
 
 
+    elif dataset.lower() == 'imagenet':
+
+        train_dataset = ImageNet(dataroot, train=True, transform=transform, download=True)
+        test_dataset = ImageNet(dataroot, train=False, transform=transform, download=True)
+
     elif dataset.lower() == 'cifar10':
 
         train_dataset = CIFAR10(dataroot, train=True, transform=transform, download=True)
@@ -69,7 +76,7 @@ def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=None, 
 
     elif dataset.lower() == 'mnist':
 
-        train_dataset = MNIST(dataroot, train=True, transform=transform, download=True)
+        train_dataset = MNIST(dataroot, train=True, transform=transform, download=True, shuffle=shuffle)
         test_dataset = MNIST(dataroot, train=False, transform=transform, download=True)
 
 
@@ -256,7 +263,7 @@ def parse_archi(fname, *args):
 
     nets = {}
 
-    net_re = re.compile('Model:')
+    net_re = re.compile('(Model|Linear classifier):')
     LAYERS = {
         'Linear': nn.Linear,
         'BatchNorm1d': nn.BatchNorm1d,
@@ -273,7 +280,7 @@ def parse_archi(fname, *args):
 
     depth = 0
     with open(fname, 'r') as _f:
-        for line in _f:
+        for idx, line in enumerate(_f, 1):
             if depth == 0:
                 new_net = net_re.match(line)
                 if new_net:
@@ -297,8 +304,10 @@ def parse_archi(fname, *args):
                     if module_type == 'Sequential':
                         nn_module_type = nn.Sequential
                         nn_layers = []
+                    elif module_type == 'Module List':
+                        nn.module_type = nn.ModuleList
                     else:
-                        raise NotImplementedError
+                        raise NotImplementedError(module_type)
 
                 depth += line.count("(")
                 depth -= line.count(")")
@@ -606,4 +615,76 @@ def parse_log_file(fname, *args):
             pass
 
     return ret
+
+def update_dict(dict_, acc, idx, N_tot, N_epochs):
+    '''returns a structured dict from python dictionary object'''
+    for key, val in dict_.items():
+        # first level of depth
+        if key == 'lr':
+            continue
+        elif isinstance(val,dict):
+            # requires a second depth
+            acc[key] = dict()
+
+            update_dict(val, acc[key], idx, N_tot, N_epochs)
+        elif isinstance(val, list):
+
+            if not key in acc.keys():
+                acc[key] = np.empty((N_tot, N_epochs))
+
+
+            acc[key][idx, :min(len(val), N_epochs)] = val[:min(N_epochs, len(val))]
+        else:
+            acc[key] = np.empty(N_tot)
+            acc[key][idx]  = val
+
+    #return acc
+    return
+
+
+def get_chkpts(path_checkpoints):
+
+    files = [name for name in os.listdir(path_checkpoints) if os.path.isfile(os.path.join(path_checkpoints, name))]
+    re_run = re.compile(r'checkpoint-r(\d+).*?\.pth')
+    chkpts = [re_run.match(file_) for file_ in files if re_run.match(file_)]
+    id_chkpts = [int(chkpt.group(1)) for chkpt in chkpts]
+    id_run =max(id_chkpts)
+    return chkpts, id_run
+
+
+
+def gather_stats(chkpts, path_checkpoints, average, id_run, device, args):
+
+
+
+    if average:
+        id_run += 1  # increment for a new computation
+        checkpoint = dict()  # reset the checkpoint (i.e. do not continue)
+
+
+    stats_prev = list()
+
+    epoch_min = None
+    for idx, file_ in enumerate(chkpts):
+        chkpt = torch.load(join_path(path_checkpoints, file_.group(0)), map_location=device)
+        stats_prev.append(chkpt['stats'])
+        epoch_min = min(epoch_min,chkpt['epochs']) if not epoch_min is None else chkpt['epochs']
+        del chkpt
+    N_prev = len(stats_prev)
+    epoch_min = start_epoch + args.nepochs if not average else epoch_min
+    N = N_prev + 1
+    stats_acc = dict()
+    for idx in range(N_prev):
+        stats = stats_prev[idx]
+        utils.update_dict(stats, stats_acc, idx, N, epoch_min)
+
+if __name__ == '__main__':
+
+
+    parser = argparse.ArgumentParser('debug')
+    parser.add_argument('files', nargs='*')
+
+    argv = parser.parse_args()
+
+    parse_archi(argv.files[0])
 
