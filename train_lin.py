@@ -5,7 +5,13 @@ import sys
 from torchsummary import summary
 import torch.nn as nn
 from collections import defaultdict
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+matplotlib.style.use('ggplot')
+import seaborn as sns
+sns.set_theme()
+
 import math
 
 import models
@@ -40,7 +46,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
-    parser.add_argument('--coefficient', type=float, default=2, help='The coefficient for the minimum width layer')
+    parser.add_argument('--coefficient', type=float, default=1, help='The coefficient for the minimum width layer')
     parser.add_argument('--ntry', type=int, default=10, help='The number of permutations to test')
     parser.add_argument('--keep_ratio', type=float, default=0.5, help='The ratio of neurons to keep')
     parser_model = parser.add_mutually_exclusive_group(required=True)
@@ -400,17 +406,17 @@ if __name__ == '__main__':
             }
             torch.save(checkpoint, os.path.join(output_path, 'checkpoint_lin.pth'))
 
-        #if err_tot.min() == 0:  # the data has been separated
+        if err_tot.min() == 0:  # the data has been separated
 
-        #    checkpoint = {
-        #        'linear_classifier': linear_classifier.state_dict(),
-        #        'stats': stats,
-        #        'args': args,
-        #        'optimizer': optimizer.state_dict(),
-        #        'epochs': epoch,
-        #        #'seed': seed,
-        #    }
-        #    torch.save(checkpoint, os.path.join(output_path, 'checkpoint_lin.pth'))
-        #    print('the data is separable!', file=logs)
-        #    sys.exit(1)
+            checkpoint = {
+                'linear_classifier': linear_classifier.state_dict(),
+                'stats': stats,
+                'args': args,
+                'optimizer': optimizer.state_dict(),
+                'epochs': epoch,
+                #'seed': seed,
+            }
+            torch.save(checkpoint, os.path.join(output_path, 'checkpoint_lin.pth'))
+            print('the data is separable!', file=logs)
+            sys.exit(1)
 

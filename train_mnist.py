@@ -10,6 +10,7 @@ import math
 import re
 import shutil
 from os.path import join as join_path
+import datetime
 
 import models
 import random
@@ -32,18 +33,19 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Training a classifier to inspect the layers')
     parser.add_argument('--dataset', '-dat', default='mnist', type=str, help='dataset')
     parser.add_argument('--dataroot', '-d', default='./data/', help='the root for the input data')
-    parser.add_argument('--output_root', '-o', type=str, default='./results/', help='output root for the results')
+    parser.add_argument('--output_root', '-o', type=str, help='output root for the results')
     parser.add_argument('--name', default='debug', type=str, help='the name of the experiment')
     parser.add_argument('--learning_rate', '-lr', type=float, default=1e-3, help='leraning rate')
     parser.add_argument('--lr_step', '-lrs', type=int, help='if any, the step for the learning rate scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
-    parser.add_argument('--nepochs', type=int, default=200, help='the number of epochs to train for')
+    parser.add_argument('--nepochs', type=int, default=400, help='the number of epochs to train for')
     parser.add_argument('--nlayers', type=int, default=3, help='the number of layers for the network')
 
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
-    parser.add_argument('--coefficient', '-c', type=float, default=2, help='The coefficient for the minimum width layer')
+    parser.add_argument('--coefficient', '-c', type=float, default=1, help='The coefficient for the minimum width layer')
+    parser.add_argument('--last_layer', type=int, default=None, help='the number of neurons for the last layer')
     parser.add_argument('--net_shape', '-nt', default='square', choices=['square', 'linear'], help='how the network is constructed')
     parser.add_argument('--shuffle', default=0, type=float, help='shuffle a ratio of the target samples')
     #net_size = parser.add_mutually_exclusive_group(required=True)
@@ -78,8 +80,10 @@ if __name__ == '__main__':
     if args.checkpoint is not None:  # we have some networks weights to continue
         try:
             average = args.average
+            nepoch=args.nepochs
             checkpoint = torch.load(args.checkpoint, map_location=device)
-            args = checkpoint['args']
+            args.__dict__.update(checkpoint['args'].__dict__)
+            args.nepochs=nepoch
 
         except RuntimeError as e:
             print('Error loading the checkpoint at {}'.format(e))
@@ -102,6 +106,12 @@ if __name__ == '__main__':
 
 
     # Logs
+
+    if args.output_root is None:
+        # default output directory
+
+        date = datetime.date.today().strftime('%y%m%d')
+        args.output_root = f'results/{args.dataset}/{date}'
 
     if args.vary_name is not None:
         name = ''
@@ -176,7 +186,7 @@ if __name__ == '__main__':
     else:
         raise NotImplementedError('args.net_shape={}'.format(args.net_shape))
 
-    model = models.classifiers.FCNHelper(num_layers=args.nlayers, input_dim=input_dim, num_classes=num_classes, min_width=min_width, max_width=max_width, shape=args.net_shape)
+    model = models.classifiers.FCNHelper(num_layers=args.nlayers, input_dim=input_dim, num_classes=num_classes, min_width=min_width, max_width=max_width, shape=args.net_shape, last_layer=args.last_layer)
 
     num_parameters = utils.num_parameters(model)
     num_samples_train = size_train
@@ -257,10 +267,12 @@ if __name__ == '__main__':
     ce_loss = nn.CrossEntropyLoss()
 
 
-    def save_checkpoint(fname):
+    def save_checkpoint(fname, checkpoint=None):
         '''Saves a checkpoint at fname'''
 
-        checkpoint = {'model':model.state_dict(),
+        if checkpoint is None:
+
+            checkpoint = {'model':model.state_dict(),
         'stats':stats,
         'args' : args,
         'optimizer':optimizer.state_dict(),
@@ -271,8 +283,18 @@ if __name__ == '__main__':
         torch.save(checkpoint, fname)
 
 
+    stop = False
+    epoch = start_epoch
+    previous=False
+    exit_now=False
+    tol = 1e-5
+    checkpoint_min=None
 
-    for epoch in tqdm(range(start_epoch+1, start_epoch+args.nepochs+1)):
+    #for epoch in tqdm(range(start_epoch+1, start_epoch+args.nepochs+1)):
+    while not stop:
+
+        if  epoch > start_epoch+args.nepochs:  # can't separate the data
+            sys.exit(1)  # failure
 
         model.train()
         loss_train = np.zeros(2)
@@ -303,9 +325,33 @@ if __name__ == '__main__':
             loss_train = ((idx * loss_train) + losses) / (idx+1)
             optimizer.step()
 
+        if epoch == start_epoch:  # first epoch
+            loss_min = loss_train[0]
+
+        epoch += 1
 
 
 
+        exit_now = previous and loss_train[1] == 0
+        previous = loss_train[1] == 0
+
+
+        if loss_train[0] - loss_min < tol:  # new minimum found!
+
+            last_min = 0  # reset the last min
+            checkpoint_min = {'model':model.state_dict(),
+                              'stats':stats,
+                              'args' : args,
+                              'optimizer':optimizer.state_dict(),
+                              'lr_scheduler':lr_scheduler.state_dict() if lr_scheduler is not None else None,
+                              'epochs':epoch
+                              }
+            loss_min = loss_train[0]
+
+        stop = (last_min > 20
+                or exit_now) # no improvement over 20 epochs or total of 400 epochs
+
+        last_min += 1
 
         stats['loss_train']['ce'].append(loss_train[0])
         stats['loss_train']['zo'].append(loss_train[1])
@@ -376,7 +422,7 @@ if __name__ == '__main__':
         ax.set_ylabel('Error')
         ax.set_xlabel('Epoch')
         ax.set_title('Classification error')
-        ax.set_yscale('linear')
+        ax.set_yscale('log')
         plt.savefig(fname=os.path.join(path_output, 'zero_one_loss.pdf'))
 
         fig = plt.figure()
@@ -393,7 +439,7 @@ if __name__ == '__main__':
         ax.set_xlabel('Epoch')
         ax.set_ylabel('loss (nats)')
         ax.set_title('Cross-entropy loss')
-        ax.set_yscale('linear')
+        ax.set_yscale('log')
         plt.savefig(fname=os.path.join(path_output, 'cross_entropy_loss.pdf'))
 
         #fig=plt.figure()
@@ -405,7 +451,7 @@ if __name__ == '__main__':
 
         if args.save_model and (epoch) % 5 == 0 or (epoch==start_epoch+args.nepochs):  # we save every 5 epochs
 
-            save_checkpoint(os.path.join(path_checkpoints, 'checkpoint-r{}.pth').format(args.id_run)),
+            save_checkpoint(os.path.join(path_checkpoints, 'checkpoint-r{}.pth').format(args.id_run), checkpoint_min)
 
         #if stats['loss_train']['zo'][-1] == 0.:  # separation of
 

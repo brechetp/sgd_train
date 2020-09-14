@@ -122,38 +122,49 @@ class Linear(nn.Module):
 
 class ClassifierVGG(nn.Module):
 
-    def __init__(self, model, num_tries=10, Ps=None) :
+    def __init__(self, model, num_tries=10, Rs=None) :
         '''model: a pretrained VGG model'''
 
         super().__init__()
 
         self.model = model.eval()  # should set the dropout layers to eval mode ?
+                                    # the VGG model
         self.model.requires_grad_(False)
+        # the number of classes
         num_classes = self.model.classifier[-1].out_features
+        # the different dimensions for the input
+        # take the dimensions of the classifier (should be 3?)
         Ns = [layer.in_features for layer in self.model.classifier[::-1] if isinstance(layer, nn.Linear)]
-        self.Ps = Ps = [n // 2 for n in Ns] if Ps is None else Ps
+
+        # Rs are the neurons that we remove from the layers L-1 ...
+        self.Rs = Rs = [n // 2 for n in Ns] if Rs is None else Rs  # the p's , i.e. the number of removed neurons
+        # indices of the FC layers
         self.fcn_idx = [idx for (idx, layer) in enumerate(self.model.classifier) if not isinstance(layer, nn.Dropout)]
 
 
 
         #random_perm = random_perms.unsqueeze(1) # Tx1xP
         # random_perm is now TxP
-        self.linear_mask = LinearMasked((Ns[0], Ps[0]), num_classes, n_try=num_tries)
+        self.linear_mask = LinearMasked((Ns[0], Rs[0]), num_classes, n_try=num_tries)
         self.shallow_net = nn.Sequential(
-            LinearMasked((Ns[1], Ps[1]), (Ns[0]-Ps[0]), n_try=num_tries),
+            LinearMasked((Ns[1], Rs[1]), (Ns[0]-Rs[0]), n_try=num_tries),
             nn.ReLU(inplace=True),
-            nn.Linear((Ns[0]-Ps[0]), num_classes)
+            nn.Linear((Ns[0]-Rs[0]), num_classes)
         )
 
 
     def forward(self, x):
         '''first goes through VGG, then classifies'''
 
-        out_features = self.model.avgpool(self.model.features(x)).view(x.size(0), -1)
-        out_partial = self.model.classifier[:2](out_features)  # first linear and relu
+        with torch.no_grad():
+            out_features = self.model.avgpool(self.model.features(x)).view(x.size(0), -1)
+            out_partial = self.model.classifier[:2](out_features)  # first linear and relu
         # need to branch out for the different random choices
         shallow_branch = self.shallow_net(out_partial.clone())  # skipping the dropout
-        out_next = self.model.classifier[3:5](out_partial.clone())  # next linear relu dropout
+
+        with torch.no_grad():
+            out_next = self.model.classifier[3:5](out_partial.clone())  # next linear relu dropout
+
         linear_branch = self.linear_mask(out_next)
 
         return linear_branch, shallow_branch
@@ -172,8 +183,8 @@ class LinearMasked(nn.Module):
         self.n_try = n_try
         self.out_features = out_features
         self.in_features = in_features
-        N = in_features[0]  # total number of neurons
-        R = in_features[1]  # the neurons that are removed
+        self.N = N = in_features[0]  # total number of neurons
+        self.R = R = in_features[1]  # the neurons that are removed
 
         self.mask = nn.Parameter(torch.ones((n_try, N)), requires_grad=False)
         random_perms =torch.cat([torch.randperm(N)[:R].view(1, -1) for idx in range(n_try)], dim=0)  # the random choice
@@ -198,6 +209,9 @@ class LinearMasked(nn.Module):
         # of size n_try x B x out_features
         return out_matmul
 
+    def extra_repr(self, **kwargs):
+
+        print("Total: {}, removed: {}".format(self.N, self.R))
 
 
 
@@ -205,13 +219,17 @@ class LinearMasked(nn.Module):
 
 
 
-def FCNHelper(num_layers, input_dim, num_classes, min_width, max_width=None, shape='linear'):
+
+def FCNHelper(num_layers, input_dim, num_classes, min_width, max_width=None, shape='linear', last_layer=None):
 
     if shape == 'linear':
         max_width = 2*min_width
         widths = list(np.linspace(max_width, min_width, num_layers, dtype=int))  # need three steps
     elif shape == 'square':
         widths = num_layers * [min_width]
+
+    if last_layer is not None:
+        widths[-1] = last_layer
 
     return FCN(input_dim, num_classes, widths)
 
