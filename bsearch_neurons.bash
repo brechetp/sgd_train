@@ -2,7 +2,7 @@
 
 exit_code=0
 tol=0.01
-supb=2
+supb=1
 infb=0
 dataset=cifar10
 ntry=$2
@@ -22,12 +22,11 @@ do
     echo "bounds: $infb $supb, c: $c" >> $fname
     srun -p cuda -x cuda01,cuda02 python train_mnist.py --dataset cifar10 --coefficient $c --net_shape $net_shape --name $name
     exit_code=$?
-    echo $exit_code
     if (( $exit_code == 0 )); then # the program terminated with separated data
-        echo "success"
+        echo "success" >> $fname
         supb=$c  # reduce the uppor bound
     else  # failure
-        echo "failure"
+        echo "failure" >> $fname
         infb=$c
     fi
     #echo "new bounds: $infb $supb"
