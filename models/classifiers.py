@@ -152,7 +152,7 @@ class ClassifierVGG(nn.Module):
         self.shallow_net = nn.Sequential(
             LinearMasked((Ns[1], Rs[1]), (Ns[0]-Rs[0]), n_try=num_tries),
             nn.ReLU(inplace=True),
-            nn.Linear((Ns[0]-Rs[0]), num_classes)
+            MultiLinear(num_tries, (Ns[0]-Rs[0]), num_classes)
         )
 
     #def to(self, device):
@@ -182,8 +182,46 @@ class ClassifierVGG(nn.Module):
 
         return linear_branch, shallow_branch
 
+def init_kaiming(weight, bias, fan_in=None):
+    '''Kaiming (uniform) initialization with for parameters with parallel channels'''
+
+    a = math.sqrt(5.0)  # initialization of a linear model in pytorch
+
+    if fan_in is None:
+        fan_in = weight.size(1)  # the neurons that are kept (fan_in)
+    gain = nn.init.calculate_gain('relu', a)  # kaiming uniform init
+    std = gain / (math.sqrt(fan_in))
+    bound = math.sqrt(3.0) * std
+    nn.init.uniform_(weight, -bound, bound)
+    bound = 1. / math.sqrt(fan_in)
+    nn.init.uniform_(bias, -bound, bound)
 
 
+class MultiLinear(nn.Module):
+    '''Define a parallel linear layer'''
+
+
+    def __init__(self, n_tries, in_features, out_features):
+
+        super().__init__()
+
+        weight = torch.empty((n_tries, in_features, out_features))
+        bias = torch.empty((n_tries, 1, out_features))
+
+        init_kaiming(weight, bias)
+
+        # size of weight: TxNxD
+        self.weight = nn.Parameter(weight)
+        self.bias = nn.Parameter(bias)
+
+    def forward(self, x):
+        ''' Parallel matrix multiplication '''
+        # size of x: TxBxN
+
+        out_matmul = x.matmul(self.weight) + self.bias
+        # output of size TxBxD
+
+        return out_matmul
 
 
 class LinearMasked(nn.Module):
@@ -209,16 +247,9 @@ class LinearMasked(nn.Module):
 
         # of size n_try x out_features x in_features , masked ! will need to
         # apply the mask again later on as well
-        weight = torch.empty((self.n_try, self.out_features, N)).transpose(1,2)
-        a = math.sqrt(5.0)
-        fan_in = N-R  # the neurons that are kept (fan_in)
-        gain = nn.init.caclculate_gain('relu')
-        std = gain / (math.sqrt(fan_in))
-        bound = math.sqrt(3.0) * std
-        nn.init.uniform_(weight, -bound, bound)
-        bias =torch.empty((self.n_try, self.out_features)).unsqueeze(1)
-        bound = 1. / math.sqrt(fan_in)
-        nn.init.uniform_(bias, -bound, bound)
+        weight = torch.empty((self.n_try, N, self.out_features))
+        bias =torch.empty((self.n_try, 1, self.out_features))
+        init_kaiming(weight, bias, fan_in=N-R)
 
         self.weight = nn.Parameter(weight)
         # sizes TxNxP
