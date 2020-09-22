@@ -213,6 +213,9 @@ class MultiLinear(nn.Module):
         # size of weight: TxNxD
         self.weight = nn.Parameter(weight)
         self.bias = nn.Parameter(bias)
+        self.n_tries = n_tries
+        self.in_features = in_features
+        self.out_features = out_features
 
     def forward(self, x):
         ''' Parallel matrix multiplication '''
@@ -222,6 +225,11 @@ class MultiLinear(nn.Module):
         # output of size TxBxD
 
         return out_matmul
+
+
+    def extra_repr(self):
+
+        return "n_tries={}, in_features={}, out_features={}".format(self.n_tries, self.in_features, self.out_features)
 
 
 class LinearMasked(nn.Module):
@@ -284,7 +292,7 @@ class LinearMasked(nn.Module):
 
     def extra_repr(self, **kwargs):
 
-        return "in_features={}, removed: {}".format(self.N, self.R)
+        return "n_tries={}, in_features={} (/ {}), out_features={}".format(self.n_try, self.N-self.R, self.N, self.out_features)
 
 
 
