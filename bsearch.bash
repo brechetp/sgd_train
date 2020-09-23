@@ -22,10 +22,10 @@ do
     exit_code=$?
     if (( $exit_code == 0 )); then # success return code
         echo "success" >> $fname
-        infb=$kr
+        infb=$rs
     else  # sucess, have to decrease the ratio
         echo "failure" >> $fname
-        supb=$kr
+        supb=$rs
     fi
 done
 echo "bounds: $infb $supb" >> $fname
