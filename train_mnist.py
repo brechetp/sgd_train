@@ -38,7 +38,7 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', '-lr', type=float, default=1e-3, help='leraning rate')
     parser.add_argument('--lr_step', '-lrs', type=int, help='if any, the step for the learning rate scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
-    parser.add_argument('--nepochs', type=int, default=400, help='the number of epochs to train for')
+    parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--nlayers', type=int, default=3, help='the number of layers for the network')
 
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
@@ -286,15 +286,14 @@ if __name__ == '__main__':
     stop = False
     epoch = start_epoch
     previous=False
-    exit_now=False
+    separated=False
     tol = 1e-5
     checkpoint_min=None
+    wait=100  # in epochs, tolerance for the minimum
 
     #for epoch in tqdm(range(start_epoch+1, start_epoch+args.nepochs+1)):
     while not stop:
 
-        if  epoch > start_epoch+args.nepochs:  # can't separate the data
-            sys.exit(1)  # failure
 
         model.train()
         loss_train = np.zeros(2)
@@ -332,7 +331,7 @@ if __name__ == '__main__':
 
 
 
-        exit_now = previous and loss_train[1] == 0
+        separated = previous and loss_train[1] == 0
         previous = loss_train[1] == 0
 
 
@@ -348,8 +347,9 @@ if __name__ == '__main__':
                               }
             loss_min = loss_train[0]
 
-        stop = (last_min > 20
-                or exit_now) # no improvement over 20 epochs or total of 400 epochs
+        stop = (last_min >= wait
+                or separated
+                or epoch >= start_epoch+args.nepochs ) # no improvement over wait epochs or total of 400 epochs
 
         last_min += 1
 
@@ -459,6 +459,11 @@ if __name__ == '__main__':
         #    save_checkpoint(os.path.join(path_checkpoints, 'checkpoint-r{}.pth'.format(args.id_run)))
 
         #    break
+        if stop:
+            if separated:
+                sys.exit(0)  # success
+            else:
+                sys.exit(1)  # failure
 
 
 

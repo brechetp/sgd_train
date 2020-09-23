@@ -25,15 +25,27 @@ except ImportError:
 
 def np_to_pd(stats):
     '''convert a dict of numpy arrays into a pandas dataframe'''
-    index=pd.Index(stats['epochs'], name='epoch')
-    df = pd.concat(
-        [pd.DataFrame(stats['loss_train'], index=index),
-         pd.DataFrame(stats['loss_test'], index=index)
-         ],
-        axis=1)  # create a big frame  for train and test
-    #df.index = index
+    index=pd.Index(stats.pop('epochs'), name='epoch')
+    #df = pd.concat( [pd.DataFrame(val, index=index) for val in stats.values()],axis=1)  # create a big frame  for train and test
+    name_columns = []
+    names = []
+    df = None
+    for key,val in stats.items():
+        if type(val) is list and len(val) == len(index):
+            df_new = pd.DataFrame(val, index=index)
+            name_columns +=  len(df_new.columns) * [key]
+            names += [key]
+            if df is None:
+                df = df_new
+            else:
+                df = pd.concat([df, df_new], axis=1)
+
     #index=pd.MultiIndex.from_product([['train', 'test'], ['zo', 'ce']], names=['dataset', 'type'])
-    columns=pd.MultiIndex.from_arrays([ 2*['train'] + 2*['test'], df.columns], names=['dataset', 'type'])  # set the different indexes for the array
+    N = len(df.columns) //2
+    #names = ['dataset', 'type'] name_columns is None else name_columns
+    #columns=pd.MultiIndex.from_arrays([ N*['train'] + N*['test'], df.columns], names=names)  # set the different indexes for the array
+    names=['stat', 'try']
+    columns=pd.MultiIndex.from_arrays([name_columns, df.columns], names=names)  # set the different indexes for the array
     #df.values = {'loss': df.values}
     df.columns = columns
     return df
@@ -45,10 +57,11 @@ def eval_model_df(df, output_path):
     df_plot = pd.melt(df_reset, id_vars='epoch')
     g = sns.relplot(
         data = df_plot,
-        col='type',
-        hue='dataset',
+        col='stat',
+        #hue='dataset',
         x='epoch',
         y='value',
+        kind='line',
     )
     plt.savefig(fname=os.path.join(output_path, 'losses.pdf'))
 
@@ -95,6 +108,29 @@ def eval_model(stats, output_path):
     #plt.savefig(fname=os.path.join(path_output, 'lr.pdf'))
 
     plt.close('all')
+
+def eval_lin_df(df, output_path):
+    '''process the dataframe from a linear separation result'''
+
+
+    fig=plt.figure()
+    df_reset = df.reset_index()
+    df_plot = pd.melt(df_reset, id_vars='epoch')
+    g = sns.relplot(
+        data = df_plot,
+        col='stat',
+        #hue='dataset',
+        x='epoch',
+        y='value',
+        kind='line',
+        col_wrap=4,
+        facet_kws={
+            'sharey': False,
+            'sharex': True
+        }
+    )
+    plt.savefig(fname=os.path.join(output_path, 'losses_try.pdf'))
+
 
 def eval_lin(stats, output_path):
 
@@ -185,8 +221,8 @@ def main(argv):
                 checkpoint = torch.load(f, map_location=device)
                 args = checkpoint['args']
                 batch_size = args.batch_size
-                dataset = args.dataset
-                dataroot = args.dataroot
+                #dataset = args.dataset
+                #dataroot = args.dataroot
 
                 #archis = utils.parse_archi(log_fname)
                 #transform = utils.parse_transform(log_fname)
@@ -209,10 +245,12 @@ def main(argv):
                 os.makedirs(output_path, exist_ok=True)
 
                 if 'lin' in basename:
-                    eval_lin(stats, output_path)
+                    #eval_lin(stats, output_path)
+                    eval_lin_df(df, output_path)
                 else:
                     #eval_model(stats, output_path)
                     eval_model_df(df, output_path)
+                plt.close('all')
 
 
 

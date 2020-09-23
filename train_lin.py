@@ -46,7 +46,6 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
-    parser.add_argument('--coefficient', type=float, default=1, help='The coefficient for the minimum width layer')
     parser.add_argument('--ntry', type=int, default=10, help='The number of permutations to test')
     parser.add_argument('--keep_ratio', type=float, default=0.5, help='The ratio of neurons to keep')
     parser_model = parser.add_mutually_exclusive_group(required=True)
@@ -72,7 +71,7 @@ if __name__ == '__main__':
     if args.checkpoint is not None:  # continuing previous computation
         try:
             checkpoint = torch.load(args.checkpoint, map_location=device)
-            args = checkpoint['args']
+            args.__dict__.update(checkpoint['args'].__dict__)
             cont = True  # continue the computation
         except RuntimeError:
             print('Could not load the model')
@@ -136,7 +135,7 @@ if __name__ == '__main__':
 
     #model = models.cnn.CNN(1)
 
-    num_classes = 10
+    num_classes = len(train_dataset.classes) if args.dataset != 'svhn' else 10
     imsize = next(iter(train_loader))[0].size()[1:]
     input_dim = imsize[0]*imsize[1]*imsize[2]
 

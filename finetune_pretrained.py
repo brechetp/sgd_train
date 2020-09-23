@@ -1,16 +1,19 @@
 
 import torch
 import numpy as np
+import pandas as pd
 import os
 import sys
 from torchsummary import summary
 import torch.nn as nn
-from collections import defaultdict
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import math
+matplotlib.style.use('ggplot')
+import seaborn as sns
+sns.set_theme()
 
 import models
-import random
 
 import torch.optim
 import torch
@@ -18,7 +21,8 @@ import argparse
 import utils
 import datetime
 
-from sklearn.linear_model import LogisticRegression
+
+#from sklearn.linear_model import LogisticRegression
 
 #from torchvision import models, datasets, transforms
 
@@ -36,9 +40,9 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', '-dat', default='cifar10', type=str, help='dataset')
     parser.add_argument('--dataroot', '-droot', default='./data/', help='the root for the input data')
     parser.add_argument('--name', default='vgg-16', type=str, help='the name of the experiment')
-    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-3, help='leraning rate')
+    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-2, help='leraning rate')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
-    parser.add_argument('--nepochs', type=int, default=100, help='the number of epochs to train for')
+    parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
@@ -118,6 +122,7 @@ if __name__ == '__main__':
 
 
     # Logs
+    NUM_CLASSES = utils.get_num_classes(args.dataset)
     log_fname = os.path.join(args.output_root, args.name, 'logs.txt')
 
     output_path = os.path.join(args.output_root, args.name)
@@ -125,9 +130,13 @@ if __name__ == '__main__':
     os.makedirs(output_path, exist_ok=True)
 
     feature_extract=args.feature_extract
-    model, input_size = models.pretrained.initialize_model(args.model, pretrained=True, feature_extract=feature_extract, num_classes=10)
+    model, input_size = models.pretrained.initialize_model(args.model, pretrained=True, feature_extract=feature_extract, num_classes=NUM_CLASSES)
 
     model.to(device)
+
+    if 'model' in checkpoint.keys():
+        model.load_state_dict(checkpoint['model'])
+
 
 
 
@@ -225,20 +234,24 @@ if __name__ == '__main__':
     if 'lr_scheduler' in checkpoint.keys():
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
 
+    start_epoch = 0
+
+    names=['set', 'stat']
+    #tries = np.arange(args.ntry)
+    sets = ['train', 'test']
+    stats = ['loss', 'err']
+    #layers = ['last', 'hidden']
+    columns=pd.MultiIndex.from_product([sets, stats], names=names)
+    index = pd.Index(np.arange(start_epoch, args.nepochs+start_epoch), name='epoch')
+    quant = pd.DataFrame(columns=columns, index=index, dtype=float)
+
     stats = {
-        'err_train': [],
-        'err_hidden': [],
-        'err_hidden_test': [],
-        'err_test': [],
-        'err_test': [], 'loss_train': [],
-        'loss_test': [],
-        'loss_hidden_test': [],
-        'loss_hidden_train': [],
-        'epochs': [],
         'num_parameters': num_parameters,
         'num_samples_train': num_samples_train,
-        'lr': [],
     }
+
+    if 'quant' in checkpoint.keys():
+        stats.update(checkpoint['quant'])
 
     if 'stats' in checkpoint.keys():
         stats.update(checkpoint['stats'])
@@ -256,24 +269,25 @@ if __name__ == '__main__':
     #mse_loss = nn.MSELoss()
     ce_loss = nn.CrossEntropyLoss()
 
-    start_epoch = 0
     if 'epochs' in checkpoint.keys():
         start_epoch = checkpoint['epochs']
 
 
-#    def ce_loss(input, target):
-#
-#        input: TxBxC output of the linear model
-#        target: Bx1: the target classes
-#
-#        output: TxB the loss for each try
-#        '''
-#
-#
-#        T, B, C = input.size()
-#        cond = input.gather(2,target.view(1, -1, 1).expand(T, -1, -1)).squeeze()
-#        output = - cond + input.logsumexp(dim=2)
-#        return output
+    def get_checkpoint():
+
+        global epoch
+        global model
+        global args
+        global optimizer
+
+        checkpoint = {'model':model.state_dict(),
+                                'stats':stats,
+                                'args' : args,
+                                'optimizer':optimizer.state_dict(),
+                                'lr_scheduler':lr_scheduler.state_dict() if lr_scheduler is not None else None,
+                                'epochs':epoch
+                                }
+        return checkpoint
 
 
 
@@ -284,6 +298,7 @@ if __name__ == '__main__':
     tol = 1e-5
     checkpoint_min=None
     wait=100  # in epochs, tolerance for the minimum
+    frozen = False  # will freeze the update to check if data is separated
 
 
     while not stop:
@@ -310,38 +325,41 @@ if __name__ == '__main__':
             #err_train = (idx * err_train + err.detach().cpu().numpy()) / (idx+1)
 
             loss_train = (idx * loss_train + loss.detach().cpu().numpy()) / (idx+1)
-            err = zero_one_loss(out,y)
-            err_train = (idx * err_train + err.mean(dim=0).detach().cpu().numpy()) / (idx+1)
+            err_train += zero_one_loss(out,y).detach().cpu().numpy()
             #loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
             loss.backward()
             #loss_hidden.mean(dim=1).backward(ones)
-            optimizer.step()
+            if not frozen:
+                loss.backward()
+                optimizer.step()
 
         if epoch == start_epoch:  # first epoch
             loss_min = loss_train
 
-        epoch += 1
+        epoch += 1 if not frozen else 0
 
-        separated = previous and err_train == 0
-        previous = err_train == 0
+        quant.loc[epoch, ('train', 'err')] = err_train/idx
+        quant.loc[epoch, ('train', 'loss')] = loss_train
+
+        separated =  frozen and err_train == 0
+        frozen = err_train == 0  and not frozen # will test with frozen network next time, prevent from freezing twice in a row
+
+        if frozen:
+            print("Freezing the next iteration", file=logs, flush=True)
 
 
-        if loss_train - loss_min < tol:  # new minimum found!
 
-            last_min = 0  # reset the last min
-            checkpoint_min = {'model':model.state_dict(),
-                              'stats':stats,
-                              'args' : args,
-                              'optimizer':optimizer.state_dict(),
-                              'lr_scheduler':lr_scheduler.state_dict() if lr_scheduler is not None else None,
-                              'epochs':epoch
-                              }
-            loss_min = loss_train[0]
+        #if loss_train - loss_min < tol:  # new minimum found!
 
-        stop = (last_min > wait
-                or separated) # no improvement over wait epochs or total of 400 epochs
+        #    last_min = 0  # reset the last min
+        #    checkpoint_min = get_checkpoint()
+        #    loss_min = loss_train
 
-        last_min += 1
+        #stop = (#False #last_min > wait
+        stop = (separated
+                or epoch > start_epoch + args.nepochs) # no improvement over wait epochs or total of 400 epochs
+
+        #last_min += 1
         #err_train_test = np.zeros(args.ntry)
         err_test = 0
         #err_train_hidden  = np.zeros(args.ntry)
@@ -375,42 +393,62 @@ if __name__ == '__main__':
 
         #stats['err_hidden'].append(err_train_hidden/idx)
         #stats['err_hidden_test'].append(err_hidden_test/idx)
-        stats['err_train'].append(err_train/idx)
-        stats['err_test'].append(err_test/idx)
-        stats['loss_train'].append(loss_train)
-        stats['loss_test'].append(loss_test)
+        quant.loc[epoch, ('test', 'err')] = err_test / idx
+        quant.loc[epoch, ('test', 'loss')] = loss_test
+        #stats['err_test'].append(err_test/idx)
+        #stats['loss_test'].append(loss_test)
         #stats['loss_hidden_train'].append(loss_hidden_tot)
         #stats['loss_hidden_test'].append(loss_hidden_test)
 
-        stats['epochs'].append(epoch)
+        #stats['epochs'].append(epoch)
 
 
 
-        #print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
-        print('ep {}, train loss (min/max): {:g} / {:g}, err (min/max): {:g}/{:g}, progress: {}/{}'.format(
-            epoch, stats['loss_train'][-1].min(), stats['loss_train'][-1].max(),
-            stats['err_train'][-1].min(), stats['err_train'][-1].max(), idx, len(train_loader)),
-            #stats['loss_test']['ce'][-1], stats['loss_test']['zo'][-1]),
-            file=logs, flush=True)
+        print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
+        epoch, quant.loc[epoch, ('train', 'loss')], quant.loc[epoch, ('train', 'err')], quant.loc[epoch, ('test', 'loss')], quant.loc[epoch, ('test', 'err')]),
+        #stats['loss_test']['ce'][-1], stats['loss_test']['zo'][-1]),
+        file=logs, flush=True)
 
+        quant_reset = quant.reset_index()
+        quant_plot = pd.melt(quant_reset, id_vars='epoch')
+        g = sns.relplot(
+            data = quant_plot,
+            #col='layer',
+            hue='set',
+            row='stat',
+            x='epoch',
+            y='value',
+            kind='line',
+            #ci=100,  # the whole spectrum of the data
+            facet_kws={
+            'sharey': False,
+            'sharex': True
+        }
+        )
 
-        fig, axes = plt.subplots(2, 1, squeeze=True, sharex=True)
-        axes[0].plot(stats['epochs'], stats['err_train'],  marker='o')
-        axes[1].plot(stats['epochs'], stats['err_test'], marker='o')
-        axes[0].set_title('Train')
-        axes[1].set_title('Test')
-        #fig.suptitle(f'ntry={args.ntry}, remove={linear_classifier.Rs}')
-        fig.suptitle(f'ds={args.dataset}')
-        axes[0].set_yscale('log')
-        axes[1].set_yscale('log')
+        g.set(yscale='log')
 
-        plt.savefig(fname=os.path.join(output_path, 'zero_one_loss.pdf'))
+        plt.savefig(fname=os.path.join(output_path, 'losses.pdf'))
+
+        plt.close('all')
+
+        #fig, axes = plt.subplots(2, 1, squeeze=True, sharex=True)
+        #axes[0].plot(stats['epochs'], stats['err_train'],  marker='o')
+        #axes[1].plot(stats['epochs'], stats['err_test'], marker='o')
+        #axes[0].set_title('Train')
+        #axes[1].set_title('Test')
+        ##fig.suptitle(f'ntry={args.ntry}, remove={linear_classifier.Rs}')
+        #fig.suptitle(f'ds={args.dataset}')
+        #axes[0].set_yscale('log')
+        #axes[1].set_yscale('log')
+
+        #plt.savefig(fname=os.path.join(output_path, 'zero_one_loss.pdf'))
 
        # fig, axes= plt.subplots(2, 1, squeeze=True, sharey=True, sharex=True)
 
         #axes[0].plot(stats['epochs'], stats['err_hidden'], marker='o')
         #axes[0].legend([f'Layer {i}' for i in range(1, 1+args.ntry)])
-        #axes[0].set_title('Train')
+    #axes[0].set_title('Train')
 
        # axes[0].set_ylabel('Error')
        # axes[0].set_yscale('linear')
@@ -452,33 +490,18 @@ if __name__ == '__main__':
 
         plt.close('all')
 
-        if args.save_model and (epoch) % 5 == 0 or (epoch==start_epoch+args.nepochs):  # we save every 5 epochs
-            checkpoint = {
-                'model': model.state_dict(),
-                'stats': stats,
-                'args': args,
-                'optimizer': optimizer.state_dict(),
-                'epochs': epoch,
-                #'seed': seed,
-            }
+        if args.save_model and (epoch) % 5 == 0:  # we save every 5 epochs
+            checkpoint = get_checkpoint()
             torch.save(checkpoint, os.path.join(output_path, 'checkpoint.pth'))
+
 
         if stop:
             if separated:
+                checkpoint = get_checkpoint()
+                torch.save(checkpoint, os.path.join(output_path, 'checkpoint.pth'))
+                print("Data is separated.", file=logs)
                 sys.exit(0)  # success
             else:
+                #torch.save(checkpoint_min, os.path.join(output_path, 'checkpoint.pth'))
                 sys.exit(1)  # failure
-        #if err_train.min() == 0:  # the data has been separated
-
-        #    checkpoint = {
-        #        'linear_classifier': linear_classifier.state_dict(),
-        #        'stats': stats,
-        #        'args': args,
-        #        'optimizer': optimizer.state_dict(),
-        #        'epochs': epoch,
-        #        #'seed': seed,
-        #    }
-        #    torch.save(checkpoint, os.path.join(output_path, 'checkpoint_lin.pth'))
-        #    print('the data is separable!', file=logs)
-        #    sys.exit(1)
 

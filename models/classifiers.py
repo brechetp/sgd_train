@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import models.pretrained
 import utils
+import math
 
 class FCN(nn.Module):
     '''Fully-connected neural network'''
@@ -88,9 +89,10 @@ class Linear(nn.Module):
         self.weight = nn.Parameter(self.mask.unsqueeze(1) * torch.randn((self.T, self.C, self.N)))
         self.bias = nn.Parameter(torch.zeros(self.T, self.C))
 
-    def extra_repr(self, **kwargs):
 
-        print("random tries size: {}, {}".format(self.weight.size(), self.bias.size()), **kwargs)
+    def extra_repr(self):
+
+        return "random tries size: {}, {}".format(self.weight.size(), self.bias.size())
 
     def forward(self, x):
         '''return size: TxBxC'''
@@ -127,7 +129,8 @@ class ClassifierVGG(nn.Module):
 
         super().__init__()
 
-        self.model = model.eval()  # should set the dropout layers to eval mode ?
+        #self.model = model.eval()  # should set the dropout layers to eval mode ?
+        self.model = model
                                     # the VGG model
         self.model.requires_grad_(False)
         # the number of classes
@@ -137,9 +140,9 @@ class ClassifierVGG(nn.Module):
         Ns = [layer.in_features for layer in self.model.classifier[::-1] if isinstance(layer, nn.Linear)]
 
         # Rs are the neurons that we remove from the layers L-1 ...
-        self.Rs = Rs = [n // 2 for n in Ns] if Rs is None else Rs  # the p's , i.e. the number of removed neurons
+        self.Rs = Rs = [n // 2 for n in Ns] if Rs is None else Rs  # the R's , i.e. the number of removed neurons
         # indices of the FC layers
-        self.fcn_idx = [idx for (idx, layer) in enumerate(self.model.classifier) if not isinstance(layer, nn.Dropout)]
+        self.fcn_idx = [idx for (idx, layer) in enumerate(self.model.classifier) if not isinstance(layer, nn.Dropout)]  # remove the dropout layers
 
 
 
@@ -147,30 +150,86 @@ class ClassifierVGG(nn.Module):
         # random_perm is now TxP
         self.linear_mask = LinearMasked((Ns[0], Rs[0]), num_classes, n_try=num_tries)
         self.shallow_net = nn.Sequential(
-            LinearMasked((Ns[1], Rs[1]), (Ns[0]-Rs[0]), n_try=num_tries),
+            LinearMasked((Ns[1], Rs[1]), (Rs[0]), n_try=num_tries),
             nn.ReLU(inplace=True),
-            nn.Linear((Ns[0]-Rs[0]), num_classes)
+            MultiLinear(num_tries, (Rs[0]), num_classes)
         )
+
+    #def to(self, device):
+    #    '''Recursively put the parameters on the device'''
+
+    #    self.linear_mask.to(device)
+    #    self.shallow_net.to(device)
+    #    self.model.to(device)
+
+
 
 
     def forward(self, x):
         '''first goes through VGG, then classifies'''
 
         with torch.no_grad():
-            out_features = self.model.avgpool(self.model.features(x)).view(x.size(0), -1)
+            out_features = self.model.avgpool(self.model.features(x)).view(x.size(0), -1)  # forward VGG
             out_partial = self.model.classifier[:2](out_features)  # first linear and relu
         # need to branch out for the different random choices
-        shallow_branch = self.shallow_net(out_partial.clone())  # skipping the dropout
+        shallow_branch = self.shallow_net(out_partial.clone())  # the shallow reduced network
 
-        with torch.no_grad():
-            out_next = self.model.classifier[3:5](out_partial.clone())  # next linear relu dropout
+        with torch.no_grad():  # frozen VGG
+            out_next = self.model.classifier[2:4](out_partial.clone())  # next linear relu (no dropout)
+            # only the last classifier is skipped
 
         linear_branch = self.linear_mask(out_next)
 
         return linear_branch, shallow_branch
 
+def init_kaiming(weight, bias, fan_in=None):
+    '''Kaiming (uniform) initialization with for parameters with parallel channels'''
+
+    a = math.sqrt(5.0)  # initialization of a linear model in pytorch
+
+    if fan_in is None:
+        fan_in = weight.size(1)  # the neurons that are kept (fan_in)
+    gain = nn.init.calculate_gain('relu', a)  # kaiming uniform init
+    std = gain / (math.sqrt(fan_in))
+    bound = math.sqrt(3.0) * std
+    nn.init.uniform_(weight, -bound, bound)
+    bound = 1. / math.sqrt(fan_in)
+    nn.init.uniform_(bias, -bound, bound)
 
 
+class MultiLinear(nn.Module):
+    '''Define a parallel linear layer'''
+
+
+    def __init__(self, n_tries, in_features, out_features):
+
+        super().__init__()
+
+        weight = torch.empty((n_tries, in_features, out_features))
+        bias = torch.empty((n_tries, 1, out_features))
+
+        init_kaiming(weight, bias)
+
+        # size of weight: TxNxD
+        self.weight = nn.Parameter(weight)
+        self.bias = nn.Parameter(bias)
+        self.n_tries = n_tries
+        self.in_features = in_features
+        self.out_features = out_features
+
+    def forward(self, x):
+        ''' Parallel matrix multiplication '''
+        # size of x: TxBxN
+
+        out_matmul = x.matmul(self.weight) + self.bias
+        # output of size TxBxD
+
+        return out_matmul
+
+
+    def extra_repr(self):
+
+        return "n_tries={}, in_features={}, out_features={}".format(self.n_tries, self.in_features, self.out_features)
 
 
 class LinearMasked(nn.Module):
@@ -186,32 +245,54 @@ class LinearMasked(nn.Module):
         self.N = N = in_features[0]  # total number of neurons
         self.R = R = in_features[1]  # the neurons that are removed
 
-        self.mask = nn.Parameter(torch.ones((n_try, N)), requires_grad=False)
-        random_perms =torch.cat([torch.randperm(N)[:R].view(1, -1) for idx in range(n_try)], dim=0)  # the random choice
+        self.mask = nn.Parameter(torch.ones((n_try, N)), requires_grad=False)  # all ones, i.e. selecting, need to remove the random neurons
+        random_perms =torch.cat([torch.randperm(N)[:R].view(1, -1) for idx in range(n_try)], dim=0)  # the random choices, as many as n_try
         self.random_perm = nn.Parameter(random_perms.unsqueeze(1), requires_grad=False)  # Tx1xP
-        zeros = torch.zeros((n_try, N))
+        zeros = torch.zeros((n_try, N))  # the filling zeros
         self.mask.scatter_(1, random_perms, zeros)
+        self.mask.unsqueeze_(1)
+        # size Tx1xN
 
-        # of size n_try x out_features x in_features , masked !
-        self.weight = nn.Parameter(self.mask.unsqueeze(1) * torch.randn((self.n_try, self.out_features, N)))
-        self.bias = nn.Parameter(torch.zeros(self.n_try, self.out_features))
+        # of size n_try x out_features x in_features , masked ! will need to
+        # apply the mask again later on as well
+        weight = torch.empty((self.n_try, N, self.out_features))
+        bias =torch.empty((self.n_try, 1, self.out_features))
+        init_kaiming(weight, bias, fan_in=N-R)
+
+        self.weight = nn.Parameter(weight)
+        # sizes TxNxP
+        self.bias = nn.Parameter(bias)
+
+        #self.register_parameter('weight', self.weight)
+        #self.register_parameter('bias', self.bias)
+        #self.register_parameter('mask', self.mask)
+
 
 
     def forward(self, x):
 
-        out_last = x
-        out_last = out_last.unsqueeze(0).expand(self.n_try, -1, -1)
-        out_mask = self.mask.unsqueeze(1) * out_last
-        # of size TxBxP
+        out_last = x.unsqueeze(0).expand(self.n_try, -1, -1)
+        # size TxBxN
+        #out_last = out_last.unsqueeze(0).expand(self.n_try, -1, -1)
+        #
+        out_mask = self.mask * out_last  # selecting the activations
+        # size TxBxN
 
 
-        out_matmul = out_mask.matmul(self.weight.transpose(1, 2)) + self.bias.unsqueeze(1)
+        # performing the forward pass
+        # TxBxN * TxNxP ->  TxBxP
+        out_matmul = out_mask.matmul(self.weight) + self.bias
         # of size n_try x B x out_features
         return out_matmul
 
+    #def to(self, device):
+
+    #    self.weight.to(device)
+    #    self.bias.to(device)
+
     def extra_repr(self, **kwargs):
 
-        print("Total: {}, removed: {}".format(self.N, self.R))
+        return "n_tries={}, in_features={} (/ {}), out_features={}".format(self.n_try, self.N-self.R, self.N, self.out_features)
 
 
 

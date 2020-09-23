@@ -9,7 +9,7 @@ fname="$dir/$sbname.sbatch"
 cp "$dir/$template" $fname
 exit_code=0
 ((incr++))
-c=2
+c=0.36
 ns=square
 date=`date +%y%m%d`  # format yymmdd
 root=results/$dataset/$date
@@ -19,10 +19,10 @@ sed -i "s/^\(#SBATCH -J\) test_slurm/\1 $sbname/" $fname
 #for shuffle in `seq 0 0.1 1`;
 
 
-for nl in `seq 2 6`; 
+for nl in `seq 7 10 | shuf`; 
 do
-name=ns-$ns/nl-$nl/
-echo "#srun python train_mnist.py -o $root --name $name --dataset $dataset --nlayers $nl --coefficient $c --net_shape $ns" >> $fname; 
+name=ns-$ns/c-$c/nl-$nl/
+echo "#srun python train_mnist.py -o $root --name $name --dataset $dataset --nlayers $nl --coefficient $c --net_shape $ns" --nepoch 1000 >> $fname; 
 model=$root/$name/checkpoint-r1.pth
 echo "#srun python train_lin.py --model $model --keep_ratio 0.5 --name $name" >> $fname; 
 done;
