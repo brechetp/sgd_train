@@ -29,6 +29,17 @@ def pad_collate_fn(batch):
     return (data, torch.tensor(man, dtype=int), torch.tensor(age, dtype=torch.float))
 
 
+def get_num_classes(dataset):
+
+    NCLASSES = {'mnist': 10,
+                'cifar10': 10,
+                'svhn': 10,
+                'cifar100': 100,
+                'imagenet': 1000,
+                }
+    return NCLASSES[dataset.lower()]
+
+
 
 
 

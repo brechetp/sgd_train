@@ -4,7 +4,7 @@ import torch.nn as nn
 def set_parameter_requires_grad(model, grad):
 
     for param in model.parameters():
-        param.requires_grad = False
+        param.requires_grad = grad
 
 def initialize_model(model_name, pretrained, feature_extract=True, freeze=False, num_classes=10, use_pretrained=True) -> (nn.Module, int):
 
@@ -24,6 +24,7 @@ def initialize_model(model_name, pretrained, feature_extract=True, freeze=False,
 
         if feature_extract:
             set_parameter_requires_grad(model_ft.features, False)
+            set_parameter_requires_grad(model_ft.classifier, True)
 
     elif model_name.find('resnet') != -1:
 

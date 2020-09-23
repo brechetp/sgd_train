@@ -1,28 +1,30 @@
 #!/bin/bash
 
 exit_code=0
-tol=0.01
-supb=1
-infb=0
-ntry=$2
+tol=10
+supb=4096
+infb=1600
+ntry=10
 date=`date +%y%m%d`  # format yymmdd
 model=$1
 #model=$root/$name/checkpoint.pth
 
 while (( $(echo "$supb-$infb > $tol" | bc -l)));
 do
-    kr=`echo $(echo "($supb+$infb)/2" | bc -l) | awk '{printf "%f", $0}'` # the keep ratio
-    name=ntry-$ntry-kr-$kr
+    #kr=`echo $(echo "0.5+($supb+$infb)/2" | bc -l) | awk '{printf "%d", $0}'` # the keep ratio
+    # the removed neurons
+    rs=`echo $(echo "0.5+($supb+$infb)/2" | bc -l) | awk '{printf "%d", $0}'` # the keep ratio
+    name=ntry-$ntry/rs-$rs
     fname=${model%/*.pth}/bounds.txt
-    echo "bounds: $infb $supb, kr: $kr" >> $fname
+    echo "bounds: $infb $supb, r: $rs" >> $fname
     #srun -p cuda -x cuda01,cuda02 python train_mnist.py --dataset $dataset --net_topology $nt --coefficient $c  --name $name -o $root
-    srun -p cuda -x cuda01,cuda02 python train_lin.py --model $model  --keep_ratio $kr --name $name --ntry $ntry
+    srun -p cuda -x cuda01,cuda02 python deep_lin.py --model $model --Rs $rs --name $name --ntry $ntry
     exit_code=$?
-    if (( $exit_code == 0 )); then # failure (i.e. the program terminated)
-        echo "failure"
+    if (( $exit_code == 0 )); then # success return code
+        echo "success" >> $fname
         infb=$kr
     else  # sucess, have to decrease the ratio
-        echo "success"
+        echo "failure" >> $fname
         supb=$kr
     fi
 done

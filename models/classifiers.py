@@ -150,9 +150,9 @@ class ClassifierVGG(nn.Module):
         # random_perm is now TxP
         self.linear_mask = LinearMasked((Ns[0], Rs[0]), num_classes, n_try=num_tries)
         self.shallow_net = nn.Sequential(
-            LinearMasked((Ns[1], Rs[1]), (Ns[0]-Rs[0]), n_try=num_tries),
+            LinearMasked((Ns[1], Rs[1]), (Rs[0]), n_try=num_tries),
             nn.ReLU(inplace=True),
-            MultiLinear(num_tries, (Ns[0]-Rs[0]), num_classes)
+            MultiLinear(num_tries, (Rs[0]), num_classes)
         )
 
     #def to(self, device):
