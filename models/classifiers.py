@@ -142,18 +142,18 @@ class ClassifierVGG(nn.Module):
         # Rs are the neurons that we remove from the layers L-1 ...
         self.Rs = Rs = [n // 2 for n in Ns] if Rs is None else Rs  # the R's , i.e. the number of removed neurons
         # indices of the FC layers
-        self.fcn_idx = [idx for (idx, layer) in enumerate(self.model.classifier) if not isinstance(layer, nn.Dropout)]  # remove the dropout layers
 
 
 
         #random_perm = random_perms.unsqueeze(1) # Tx1xP
         # random_perm is now TxP
-        self.linear_mask = LinearMasked((Ns[0], Rs[0]), num_classes, n_try=num_tries)
-        self.shallow_net = nn.Sequential(
-            LinearMasked((Ns[1], Rs[1]), (Rs[0]), n_try=num_tries),
-            nn.ReLU(inplace=True),
-            MultiLinear(num_tries, (Rs[0]), num_classes)
-        )
+        self.linear_mask = LinearMasked((Ns[0], Rs[0]), num_classes, num_tries=num_tries)
+        self.shallow_net = utils.contruct_mmlp_net([(Ns[1], Rs[1]), Rs[0], num_classes], num_tries=num_tries)
+        #nn.Sequential(
+        #    LinearMasked((Ns[1], Rs[1]), (Rs[0]), num_tries=num_tries),
+        #    nn.ReLU(inplace=True),
+        #    MultiLinear(Rs[0], num_classes, num_tries=num_tries)
+        #)
 
     #def to(self, device):
     #    '''Recursively put the parameters on the device'''
@@ -232,31 +232,84 @@ class MultiLinear(nn.Module):
         return "n_tries={}, in_features={}, out_features={}".format(self.n_tries, self.in_features, self.out_features)
 
 
+class ClassifierFCN(nn.Module):
+    '''The classifiers plugged into a FCN network'''
+
+    def __init__(self, model: FCN, num_tries=10, Rs=None):
+
+        # the indices of the features (i.e. after the activations
+        # and the size of the output network
+        self.indices  =[ (idx, layer.out_features) for idx,layer in enumerate(model.main) if isinstance(layer, nn.ReLU)]
+        self.model = model
+
+        n_layers = len(self.indices)  # the total number of layers to plug into
+        n_classes = model.main[-1].out_features
+
+        if Rs is None:
+            Rs = [N//5 for (_,N) in self.indices[::-1]]
+
+        # each network idx will have
+        # 1. a random mask removing R neurons
+        # 2. idx-1 depth with R neurons
+        # 3. output layer into n_classes
+
+        self.networks = nn.ModuleList()
+        sizes = []
+
+
+        for idx, (_, N) in enumerate(self.indices[::-1]):
+            R = Rs[idx]
+            sizes = [(N, R)] + idx * [R] + [n_classes]
+            net = utils.construct_mmlp_net(sizes, fct_act=nn.ReLU)
+            self.networks.append(net)
+
+            #sizes =
+
+    def forward(self, x):
+        '''Forward of the different layers'''
+
+        # go through the different layers inside main
+
+        feats=[x]
+        idx_prev=0
+        with torch.no_grad():
+            for idx,_ in self.indices:
+                # for all the linear layers (marked by their indices in
+                # self.indices)
+                feats.append(self.model.main[idx_prev:idx](feats[-1]))
+                idx_prev = idx
+
+        out = [ net(feat.clone()) for (net, feat) in zip(self.networks, feats[:0:-1])]  # all feats except for the first one = x
+
+        return out
+
+
 class LinearMasked(nn.Module):
 
-    def __init__(self, in_features, out_features, n_try=10):
+    def __init__(self, in_features, out_features, num_tries=10):
         '''in_features: tuple total / remove
         '''
 
         super().__init__()
-        self.n_try = n_try
+        self.num_tries = num_tries
         self.out_features = out_features
         self.in_features = in_features
         self.N = N = in_features[0]  # total number of neurons
         self.R = R = in_features[1]  # the neurons that are removed
 
-        self.mask = nn.Parameter(torch.ones((n_try, N)), requires_grad=False)  # all ones, i.e. selecting, need to remove the random neurons
-        random_perms =torch.cat([torch.randperm(N)[:R].view(1, -1) for idx in range(n_try)], dim=0)  # the random choices, as many as n_try
+        # of size TxN
+        self.mask = nn.Parameter(torch.ones((num_tries, N)), requires_grad=False)  # all ones, i.e. selecting, need to remove the random neurons
+        random_perms =torch.cat([torch.randperm(N)[:R].view(1, -1) for idx in range(num_tries)], dim=0)  # the random choices, as many as num_tries
         self.random_perm = nn.Parameter(random_perms.unsqueeze(1), requires_grad=False)  # Tx1xP
-        zeros = torch.zeros((n_try, N))  # the filling zeros
+        zeros = torch.zeros((num_tries, N))  # the filling zeros
         self.mask.scatter_(1, random_perms, zeros)
         self.mask.unsqueeze_(1)
         # size Tx1xN
 
-        # of size n_try x out_features x in_features , masked ! will need to
+        # of size num_tries x out_features x in_features , masked ! will need to
         # apply the mask again later on as well
-        weight = torch.empty((self.n_try, N, self.out_features))
-        bias =torch.empty((self.n_try, 1, self.out_features))
+        weight = torch.empty((self.num_tries, N, self.out_features))
+        bias =torch.empty((self.num_tries, 1, self.out_features))
         init_kaiming(weight, bias, fan_in=N-R)
 
         self.weight = nn.Parameter(weight)
@@ -271,9 +324,9 @@ class LinearMasked(nn.Module):
 
     def forward(self, x):
 
-        out_last = x.unsqueeze(0).expand(self.n_try, -1, -1)
+        out_last = x.unsqueeze(0).expand(self.num_tries, -1, -1)
         # size TxBxN
-        #out_last = out_last.unsqueeze(0).expand(self.n_try, -1, -1)
+        #out_last = out_last.unsqueeze(0).expand(self.num_tries, -1, -1)
         #
         out_mask = self.mask * out_last  # selecting the activations
         # size TxBxN
@@ -282,7 +335,7 @@ class LinearMasked(nn.Module):
         # performing the forward pass
         # TxBxN * TxNxP ->  TxBxP
         out_matmul = out_mask.matmul(self.weight) + self.bias
-        # of size n_try x B x out_features
+        # of size num_tries x B x out_features
         return out_matmul
 
     #def to(self, device):
@@ -292,7 +345,7 @@ class LinearMasked(nn.Module):
 
     def extra_repr(self, **kwargs):
 
-        return "n_tries={}, in_features={} (/ {}), out_features={}".format(self.n_try, self.N-self.R, self.N, self.out_features)
+        return "n_tries={}, in_features={} (/ {}), out_features={}".format(self.num_tries, self.N-self.R, self.N, self.out_features)
 
 
 

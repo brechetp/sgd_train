@@ -63,6 +63,10 @@ if __name__ == '__main__':
     parser_feat.add_argument('--feature_extract', action='store_true', dest='feature_extract', help='use the pretrained model as a feature extractor')
     parser_feat.add_argument('--no-feature_extract', action='store_false', dest='feature_extract')
     parser.set_defaults(feature_extract=True)
+    parser_proceed = parser.add_mutually_exclusive_group()
+    parser_proceed.add_argument('--proceed', action='store_true', dest='proceed', help='proceed with the same parameters')
+    parser_proceed.add_argument('--discontinue', action='store_false', dest='proceed')
+    parser.set_defaults(process=True)
 
 
 
@@ -98,8 +102,20 @@ if __name__ == '__main__':
         try:
             checkpoint = torch.load(args.checkpoint, map_location=device)
             #args = checkpoint['args']
-            args.__dict__.update(checkpoint['args'].__dict__)
-            cont = True  # continue the computation
+            if args.proceed:  # if we proceed with exactly the same parameters
+                args.__dict__.update(checkpoint['args'].__dict__)
+            else:
+                feat_ext = args.feature_extract
+                nepochs = args.nepochs
+                name = args.name
+                root = args.output_root
+                args.__dict__.update(checkpoint['args'].__dict__)
+                args.feature_extract = feat_ext
+                args.nepochs = nepochs
+                args.name = name
+                args.output_root = root
+
+            #cont = True  # proceed the computation
         except RuntimeError:
             print('Could not load the model')
 
@@ -125,9 +141,9 @@ if __name__ == '__main__':
     NUM_CLASSES = utils.get_num_classes(args.dataset)
     log_fname = os.path.join(args.output_root, args.name, 'logs.txt')
 
-    output_path = os.path.join(args.output_root, args.name)
+    path_output = os.path.join(args.output_root, args.name)
 
-    os.makedirs(output_path, exist_ok=True)
+    os.makedirs(path_output, exist_ok=True)
 
     feature_extract=args.feature_extract
     model, input_size = models.pretrained.initialize_model(args.model, pretrained=True, feature_extract=feature_extract, num_classes=NUM_CLASSES)
@@ -141,9 +157,11 @@ if __name__ == '__main__':
 
 
     if not args.debug:
-        logs = open(os.path.join(output_path, 'logs.txt'), 'w')
+        logs = open(os.path.join(path_output, 'logs.txt'), 'w')
     else:
         logs = sys.stdout
+
+    logs_debug = open(os.path.join(path_output, 'debug.log'), 'w')
 #     logs = None
 
     print(os.sep.join((os.path.abspath(__file__).split(os.sep)[-2:])), file=logs)  # folder + name of the script
@@ -229,7 +247,11 @@ if __name__ == '__main__':
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.9)
 
     if 'optimizer' in checkpoint.keys():
-        optimizer.load_state_dict(checkpoint['optimizer'])
+        try:
+            optimizer.load_state_dict(checkpoint['optimizer'])
+        except ValueError as e:
+            print(e)
+
 
     if 'lr_scheduler' in checkpoint.keys():
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
@@ -282,6 +304,7 @@ if __name__ == '__main__':
 
         checkpoint = {'model':model.state_dict(),
                                 'stats':stats,
+                      'quant': quant,
                                 'args' : args,
                                 'optimizer':optimizer.state_dict(),
                                 'lr_scheduler':lr_scheduler.state_dict() if lr_scheduler is not None else None,
@@ -289,6 +312,19 @@ if __name__ == '__main__':
                                 }
         return checkpoint
 
+
+    def save_checkpoint(fname=None, checkpoint=None):
+        '''Save checkpoint to disk'''
+
+        global path_output
+
+        if fname is None:
+            fname = os.path.join(path_output, 'checkpoint.pth')
+
+        if checkpoint is None:
+            checkpoint = get_checkpoint()
+
+        torch.save(checkpoint, fname)
 
 
     stop = False
@@ -327,7 +363,6 @@ if __name__ == '__main__':
             loss_train = (idx * loss_train + loss.detach().cpu().numpy()) / (idx+1)
             err_train += zero_one_loss(out,y).detach().cpu().numpy()
             #loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
-            loss.backward()
             #loss_hidden.mean(dim=1).backward(ones)
             if not frozen:
                 loss.backward()
@@ -409,13 +444,16 @@ if __name__ == '__main__':
         #stats['loss_test']['ce'][-1], stats['loss_test']['zo'][-1]),
         file=logs, flush=True)
 
+
+        utils.print_cuda_memory_usage(device, logs_debug)
+
         quant_reset = quant.reset_index()
         quant_plot = pd.melt(quant_reset, id_vars='epoch')
         g = sns.relplot(
             data = quant_plot,
             #col='layer',
             hue='set',
-            row='stat',
+            col='stat',
             x='epoch',
             y='value',
             kind='line',
@@ -428,7 +466,7 @@ if __name__ == '__main__':
 
         g.set(yscale='log')
 
-        plt.savefig(fname=os.path.join(output_path, 'losses.pdf'))
+        plt.savefig(fname=os.path.join(path_output, 'losses.pdf'))
 
         plt.close('all')
 
@@ -442,7 +480,7 @@ if __name__ == '__main__':
         #axes[0].set_yscale('log')
         #axes[1].set_yscale('log')
 
-        #plt.savefig(fname=os.path.join(output_path, 'zero_one_loss.pdf'))
+        #plt.savefig(fname=os.path.join(path_output, 'zero_one_loss.pdf'))
 
        # fig, axes= plt.subplots(2, 1, squeeze=True, sharey=True, sharex=True)
 
@@ -463,7 +501,7 @@ if __name__ == '__main__':
         #fig.suptitle(f'Rs={linear_classifier.Rs}')
         #for ax in axes:
         #    ax.label_outer()
-        #plt.savefig(fname=os.path.join(output_path, 'zo-layers.pdf'))
+        #plt.savefig(fname=os.path.join(path_output, 'zo-layers.pdf'))
 
         #fig = plt.figure()
         #ax = fig.add_subplot(111)
@@ -472,7 +510,7 @@ if __name__ == '__main__':
         ##ax.legend()
         #ax.set_title('Cross-entropy loss for the tries')
         #ax.set_yscale('linear')
-        #plt.savefig(fname=os.path.join(output_path, 'cross_entropy_loss.pdf'))
+        #plt.savefig(fname=os.path.join(path_output, 'cross_entropy_loss.pdf'))
 
         #fig = plt.figure()
         #ax = fig.add_subplot(111)
@@ -481,27 +519,27 @@ if __name__ == '__main__':
         ##ax.legend([f'Layer {i}' for i in range(1, 1+args.ntry)])
         #ax.set_title('Cross-entropy loss for the layers')
         #ax.set_yscale('linear')
-        #plt.savefig(fname=os.path.join(output_path, 'cross_entropy_loss_hidden.pdf'))
+        #plt.savefig(fname=os.path.join(path_output, 'cross_entropy_loss_hidden.pdf'))
 
         #fig=plt.figure()
         #plt.plot(stats['epochs'], stats['lr'], label='lr')
         #plt.legend()
-        #plt.savefig(fname=os.path.join(output_path, 'lr.pdf'))
+        #plt.savefig(fname=os.path.join(path_output, 'lr.pdf'))
 
         plt.close('all')
 
         if args.save_model and (epoch) % 5 == 0:  # we save every 5 epochs
-            checkpoint = get_checkpoint()
-            torch.save(checkpoint, os.path.join(output_path, 'checkpoint.pth'))
+            save_checkpoint()
 
 
-        if stop:
-            if separated:
-                checkpoint = get_checkpoint()
-                torch.save(checkpoint, os.path.join(output_path, 'checkpoint.pth'))
-                print("Data is separated.", file=logs)
-                sys.exit(0)  # success
-            else:
-                #torch.save(checkpoint_min, os.path.join(output_path, 'checkpoint.pth'))
-                sys.exit(1)  # failure
+    logs.close()
+    logs_debug.close()
+
+    if separated:
+        save_checkpoint()
+        print("Data is separated.", file=logs)
+        sys.exit(0)  # success
+    else:
+        #torch.save(checkpoint_min, os.path.join(path_output, 'checkpoint.pth'))
+        sys.exit(1)  # failure
 

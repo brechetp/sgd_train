@@ -13,8 +13,10 @@ import PIL
 import math
 import os
 import numpy as np
+import sys
 import argparse
-
+from os.path import join as join_path
+import models
 
 
 def pad_collate_fn(batch):
@@ -138,7 +140,7 @@ def get_dataloader(train_dataset, test_dataset, batch_size, ss_factor=1., size_m
     return train_loader,train_size, val_loader, val_size, test_loader, test_size
 
 
-def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, args_linear=[], kwargs_linear={}, tanh=False, out_layer=True, batchnorm=False, batchnorm_in=False):
+def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, fct_linear=nn.Linear, args_linear=[], kwargs_linear={}, tanh=False, out_layer=True, batchnorm=False, batchnorm_in=False):
     '''Constructs layers  with each layer being of sizes[i]
     with specified init and end size in sizes[0] sizes[-1]
 
@@ -163,7 +165,7 @@ def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, arg
         # adds the layer
         layers.append((
                 '{}{}-{}-{}'.format(nn.Linear.__name__, idx, prev_size, size),
-                nn.Linear(prev_size, size, *args_linear, **kwargs_linear)
+                fct_linear(prev_size, size, *args_linear, **kwargs_linear)
                 ))
         if batchnorm:
             if idx == 1 and not out_layer and not batchnorm_in:  # for discriminator network, no normalization at the beginning
@@ -187,7 +189,7 @@ def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, arg
     if out_layer:
         layers.append((
             '{}{}-{}-{}'.format(nn.Linear.__name__, idx+1, size, sizes[-1]),
-            nn.Linear(size, sizes[-1], *args_linear, **kwargs_linear)
+            fct_linear(size, sizes[-1], *args_linear, **kwargs_linear)
             ))
 
         if tanh:
@@ -197,8 +199,64 @@ def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, arg
 
     return OrderedDict(layers)
 
+def construct_mmlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, args_linear=[], num_tries=10):
+    '''Constructs multilinear layers  with each layer being of sizes[i]
+    with specified init and end size in sizes[0] sizes[-1]
+    The first layer is a LinearMasked, the subsequent ones are MultiLinear
+
+    The first size should be the total number of neurons N and the ones that are remove R in a tuple (N, R)
+
+    Args:
+        sizes (list): the list [(nin, Rin), *layers, nout] of dimensions for the layers
+        fct_act: the non linear activation function (default: nn.ReLU)
+
+    return: ordered dict of layers
+'''
+
+    idx = 0
+    size = (N, R) = sizes[0]  # total vs removed number of neurons for the mask
+    layers = []
+    norm_layer = nn.BatchNorm1d
+    if fct_act is nn.ReLU and kwargs_act == {}:
+        kwargs_act = {'inplace': True}
+    MultiLinear = models.classifiers.MultiLinear
+    LinearMasked = models.classifiers.LinearMasked
+
+    for idx, new_size in enumerate(sizes[1:-1], 1):  # for all layers specified in sizes
+        # switch the sizes
+
+        prev_size, size = size, new_size
+
+        if idx == 1:  # for the first layer
+            layers.append(('MultiLinear-{}-{}'.format(N, R),
+                            LinearMasked((N, R), size, num_tries=num_tries),
+                           ))
+        else:
+        # adds the layer
+            layers.append((
+                    '{}{}-{}-{}'.format(nn.Linear.__name__, idx, prev_size, size),
+                    MultiLinear(prev_size, size, num_tries=num_tries),
+                    ))
+        # adds the non linear activation function
+        layers.append((
+                '{}{}-{}'.format(fct_act.__name__, idx, size),
+                fct_act(*args_act, **kwargs_act)
+                ))
+
+    # at the end, appends the out layer without activation function
+    layers.append((
+        '{}{}-{}-{}'.format(nn.Linear.__name__, idx+1, size, sizes[-1]),
+        MultiLinear(size, sizes[-1], num_tries=num_tries)
+        ))
+
+    return OrderedDict(layers)
+
 def construct_mlp_net(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, args_linear=[], kwargs_linear={}, tanh=False, out_layer=True, batchnorm=False, batchnorm_in=False):
     layers = construct_mlp_layers(sizes, fct_act, args_act, kwargs_act, args_linear, kwargs_linear, tanh, out_layer, batchnorm, batchnorm_in)
+    return nn.Sequential(layers)
+
+def construct_mmlp_net(sizes, num_tries=10, fct_act=nn.ReLU):
+    layers = construct_mmlp_layers(sizes, fct_act, num_tries=num_tries)
     return nn.Sequential(layers)
 
 def num_parameters(model, only_require_grad=False):
@@ -666,6 +724,7 @@ def get_chkpts(path_checkpoints):
 
 def gather_stats(chkpts, path_checkpoints, average, id_run, device, args):
 
+    global start_epoch
 
 
     if average:
@@ -687,7 +746,20 @@ def gather_stats(chkpts, path_checkpoints, average, id_run, device, args):
     stats_acc = dict()
     for idx in range(N_prev):
         stats = stats_prev[idx]
-        utils.update_dict(stats, stats_acc, idx, N, epoch_min)
+        update_dict(stats, stats_acc, idx, N, epoch_min)
+
+def print_cuda_memory_usage(device, logs=sys.stdout, epoch=None):
+    '''The current usage of GPU memory'''
+
+
+
+    print(80*'*', file=logs, flush=True)
+    print(epoch, file=logs, flush=True)
+    print(80*'*', file=logs, flush=True)
+    print(torch.cuda.memory_summary(device), file=logs, flush=True)
+
+
+
 
 if __name__ == '__main__':
 

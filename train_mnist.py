@@ -1,14 +1,16 @@
 import torch
 import numpy as np
+import pandas as pd
 import os
 import sys
-from torchsummary import summary
 import torch.nn as nn
-from collections import defaultdict
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+matplotlib.style.use('ggplot')
+import seaborn as sns
+sns.set_theme()
 import math
-import re
-import shutil
 from os.path import join as join_path
 import datetime
 
@@ -32,14 +34,14 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser('Training a classifier to inspect the layers')
     parser.add_argument('--dataset', '-dat', default='mnist', type=str, help='dataset')
-    parser.add_argument('--dataroot', '-d', default='./data/', help='the root for the input data')
+    parser.add_argument('--dataroot', '-dr', default='./data/', help='the root for the input data')
     parser.add_argument('--output_root', '-o', type=str, help='output root for the results')
     parser.add_argument('--name', default='debug', type=str, help='the name of the experiment')
     parser.add_argument('--learning_rate', '-lr', type=float, default=1e-3, help='leraning rate')
     parser.add_argument('--lr_step', '-lrs', type=int, help='if any, the step for the learning rate scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
-    parser.add_argument('--nlayers', type=int, default=3, help='the number of layers for the network')
+    parser.add_argument('--depth', '-d', type=int, default=3, help='the number of layers for the network')
 
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
@@ -109,6 +111,7 @@ if __name__ == '__main__':
 
     if args.output_root is None:
         # default output directory
+
 
         date = datetime.date.today().strftime('%y%m%d')
         args.output_root = f'results/{args.dataset}/{date}'
@@ -186,7 +189,7 @@ if __name__ == '__main__':
     else:
         raise NotImplementedError('args.net_shape={}'.format(args.net_shape))
 
-    model = models.classifiers.FCNHelper(num_layers=args.nlayers, input_dim=input_dim, num_classes=num_classes, min_width=min_width, max_width=max_width, shape=args.net_shape, last_layer=args.last_layer)
+    model = models.classifiers.FCNHelper(num_layers=args.depth, input_dim=input_dim, num_classes=num_classes, min_width=min_width, max_width=max_width, shape=args.net_shape, last_layer=args.last_layer)
 
     num_parameters = utils.num_parameters(model)
     num_samples_train = size_train
@@ -242,10 +245,25 @@ if __name__ == '__main__':
         except RuntimeError as e:
             print("Can't load model (error {})".format(e))
 
+    start_epoch = 0
+    if 'epochs' in checkpoint.keys():
+        start_epoch = checkpoint['epochs']
+
+    names=['set', 'stat']
+    #tries = np.arange(args.ntry)
+    sets = ['train', 'test']
+    stats = ['loss', 'err']
+    #layers = ['last', 'hidden']
+    columns=pd.MultiIndex.from_product([sets, stats], names=names)
+    index = pd.Index(np.arange(1, args.nepochs+start_epoch), name='epoch')
+    quant = pd.DataFrame(columns=columns, index=index, dtype=float)
+
+
+    if 'quant' in checkpoint.keys():
+        quant.update(checkpoint['quant'])
+
+
     stats = {
-        'loss_test': defaultdict(list),
-        'loss_train': defaultdict(list),
-        'epochs': [],
         'num_parameters': num_parameters,
         'num_samples_train': num_samples_train,
         'lr': [],
@@ -254,9 +272,6 @@ if __name__ == '__main__':
     if 'stats' in checkpoint.keys():
         stats.update(checkpoint['stats'])
 
-    start_epoch = 0
-    if 'epochs' in checkpoint.keys():
-        start_epoch = checkpoint['epochs']
 
     classes = torch.arange(num_classes).view(1, -1).to(device)  # the different possible classes
 
@@ -267,18 +282,32 @@ if __name__ == '__main__':
     ce_loss = nn.CrossEntropyLoss()
 
 
-    def save_checkpoint(fname, checkpoint=None):
-        '''Saves a checkpoint at fname'''
+    def get_checkpoint():
+        '''Get current checkpoint'''
+        global model, stats, quant, args, optimizer, lr_scheduler, epoch
+
+        checkpoint = {
+            'model':model.state_dict(),
+            'stats':stats,
+            'quant': quant,
+            'args' : args,
+            'optimizer':optimizer.state_dict(),
+            'lr_scheduler':lr_scheduler.state_dict() if lr_scheduler is not None else None,
+            'epochs':epoch
+                    }
+
+        return checkpoint
+
+    def save_checkpoint(fname=None, checkpoint=None):
+        '''Save checkpoint to disk'''
+
+        global path_output
+
+        if fname is None:
+            fname = os.path.join(path_output, 'checkpoint.pth')
 
         if checkpoint is None:
-
-            checkpoint = {'model':model.state_dict(),
-        'stats':stats,
-        'args' : args,
-        'optimizer':optimizer.state_dict(),
-        'lr_scheduler':lr_scheduler.state_dict() if lr_scheduler is not None else None,
-        'epochs':epoch
-                    }
+            checkpoint = get_checkpoint()
 
         torch.save(checkpoint, fname)
 
@@ -290,6 +319,7 @@ if __name__ == '__main__':
     tol = 1e-5
     checkpoint_min=None
     wait=100  # in epochs, tolerance for the minimum
+    frozen = False
 
     #for epoch in tqdm(range(start_epoch+1, start_epoch+args.nepochs+1)):
     while not stop:
@@ -298,7 +328,7 @@ if __name__ == '__main__':
         model.train()
         loss_train = np.zeros(2)
         # 0: cel loss
-        # 1: 0-1 loss
+        # 1: 0-1 loss aka err
         # 2: mse loss
         losses = np.zeros(2)
 
@@ -320,31 +350,30 @@ if __name__ == '__main__':
             losses[0] = loss.item()
             losses[1] = zero_one_loss(out, y).item()
             #pred = model(x, is_man)
-            loss.backward()
             loss_train = ((idx * loss_train) + losses) / (idx+1)
-            optimizer.step()
+            if not frozen:
+                loss.backward()
+                optimizer.step()
 
         if epoch == start_epoch:  # first epoch
             loss_min = loss_train[0]
 
-        epoch += 1
+        epoch += 1 if not frozen else 0
+        str_frozen= ' (frozen)' if frozen else ''
 
 
 
-        separated = previous and loss_train[1] == 0
-        previous = loss_train[1] == 0
+        separated = frozen and loss_train[1] == 0
+        frozen = loss_train[1] == 0 and not frozen
+
+        quant.loc[epoch, ('train', 'loss')] = loss_train[0]
+        quant.loc[epoch, ('train', 'err')] = loss_train[1]
 
 
         if loss_train[0] - loss_min < tol:  # new minimum found!
 
             last_min = 0  # reset the last min
-            checkpoint_min = {'model':model.state_dict(),
-                              'stats':stats,
-                              'args' : args,
-                              'optimizer':optimizer.state_dict(),
-                              'lr_scheduler':lr_scheduler.state_dict() if lr_scheduler is not None else None,
-                              'epochs':epoch
-                              }
+            checkpoint_min = get_checkpoint()
             loss_min = loss_train[0]
 
         stop = (last_min >= wait
@@ -353,8 +382,6 @@ if __name__ == '__main__':
 
         last_min += 1
 
-        stats['loss_train']['ce'].append(loss_train[0])
-        stats['loss_train']['zo'].append(loss_train[1])
 
         model.eval()
         loss_test = np.zeros(2)
@@ -372,98 +399,70 @@ if __name__ == '__main__':
 
                 #pred = model(x, is_man)
                 #loss = loss_fn(pred,y)
-                losses[0] = zero_one_loss(out, y).item()
-                losses[1] = ce_loss(out, y).item()
+                losses[0] = ce_loss(out, y).item()
+                losses[1] = zero_one_loss(out, y).item()
 
                 loss_test = (idx * loss_test + losses) / (idx + 1)  # mean over all test data
 
-        stats['loss_test']['zo'].append(loss_test[0])
-        stats['loss_test']['ce'].append(loss_test[1])
+        quant.loc[epoch, ('test', 'loss')] = loss_test[0]
+        quant.loc[epoch, ('test', 'err')] = loss_test[1]
         #stats_acc['loss_test']['zo'][id_run-1, epoch-1] = (loss_test[0])
         #stats_acc['loss_test']['ce'][id_run-1, epoch-1] = (loss_test[1])
-        stats['epochs'].append(epoch)
         #lr_scheduler.step(loss)
-        lr_str=''
-        if lr_scheduler is not None:
-            lr_scheduler.step()
-            stats['lr'].append(lr_scheduler.get_last_lr())
-            if stats['lr'][-1] != last_lr:
-                lr_str = ', new lr: {}'.format(stats['lr'][-1])
-            last_lr = stats['lr'][-1]
 
 
 
-        print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g}){}'.format(
-            epoch, stats['loss_train']['ce'][-1], stats['loss_train']['zo'][-1],
-            stats['loss_test']['ce'][-1], stats['loss_test']['zo'][-1], lr_str),
+
+        print('ep {}{}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
+        epoch, str_frozen, quant.loc[epoch, ('train', 'loss')], quant.loc[epoch, ('train', 'err')], quant.loc[epoch, ('test', 'loss')], quant.loc[epoch, ('test', 'err')]),
+            #epoch, stats['loss_train']['ce'][-1], stats['loss_train']['zo'][-1],
+            #stats['loss_test']['ce'][-1], stats['loss_test']['zo'][-1], lr_str),
             file=logs, flush=True)
 
+        quant_reset = quant.reset_index()
+        quant_plot = pd.melt(quant_reset, id_vars='epoch')
+        g = sns.relplot(
+            data = quant_plot,
+            #col='layer',
+            hue='set',
+            row='stat',
+            x='epoch',
+            y='value',
+            kind='line',
+            #ci=100,  # the whole spectrum of the data
+            facet_kws={
+            'sharey': False,
+            'sharex': True
+        }
+        )
+
+        g.set(yscale='log')
+
+        plt.savefig(fname=os.path.join(path_output, 'losses.pdf'))
+
+        plt.close('all')
+
         #means =
-        #err =
-        #fig = plt.figure()
-        #ax = fig.add_subplot(111)
-        #ax.plot(stats['epochs'], stats['loss_train']['mse'], label='Train')
-        #ax.plot(stats['epochs'], stats['loss_test']['mse'], label='Test')
-        #ax.legend()
-        #ax.set_title('MSE')
-        #ax.set_yscale('log')
-        #plt.savefig(fname=os.path.join(path_output, 'mse_loss.pdf'))
-
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-
-        ax.plot(stats['epochs'], stats['loss_train']['zo'], label='Train')
-        ax.plot(stats['epochs'], stats['loss_test']['zo'],   label='Test')
-        #            yerr=stats_acc['loss_train']['zo'][:, :epoch].std(axis=0),
-        #            label='Train')
-        #ax.errorbar(stats['epochs'], stats_acc['loss_test']['zo'][:, :epoch].mean(axis=0),
-        #            yerr=stats_acc['loss_test']['zo'][:, :epoch].std(axis=0),
-        ax.legend()
-        ax.set_ylabel('Error')
-        ax.set_xlabel('Epoch')
-        ax.set_title('Classification error')
-        ax.set_yscale('log')
-        plt.savefig(fname=os.path.join(path_output, 'zero_one_loss.pdf'))
-
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.plot(stats['epochs'], stats['loss_train']['ce'], label='Train')
-        ax.plot(stats['epochs'], stats['loss_test']['ce'],   label='Test')
-        #ax.errorbar(stats['epochs'], stats_acc['loss_train']['ce'][:, :epoch].mean(axis=0),
-        #        yerr=stats_acc['loss_train']['ce'][:, :epoch].std(axis=0),
-        #        label='Train')
-        #ax.errorbar(stats['epochs'], stats_acc['loss_test']['ce'][:, :epoch].mean(axis=0),
-        #        yerr=stats_acc['loss_test']['ce'][:, :epoch].std(axis=0),
-        #        label='Test')
-        ax.legend()
-        ax.set_xlabel('Epoch')
-        ax.set_ylabel('loss (nats)')
-        ax.set_title('Cross-entropy loss')
-        ax.set_yscale('log')
-        plt.savefig(fname=os.path.join(path_output, 'cross_entropy_loss.pdf'))
-
-        #fig=plt.figure()
-        #plt.plot(stats['epochs'], stats['lr'], label='lr')
-        #plt.legend()
         #plt.savefig(fname=os.path.join(path_output, 'lr.pdf'))
 
         plt.close('all')
 
-        if args.save_model and (epoch) % 5 == 0 or (epoch==start_epoch+args.nepochs):  # we save every 5 epochs
+        if args.save_model and (epoch) % 5 == 0:  # we save every 5 epochs
 
-            save_checkpoint(os.path.join(path_checkpoints, 'checkpoint-r{}.pth').format(args.id_run), checkpoint_min)
-
-        #if stats['loss_train']['zo'][-1] == 0.:  # separation of
+            save_checkpoint()
 
         #    print('Data has been separated', file=logs)
-        #    save_checkpoint(os.path.join(path_checkpoints, 'checkpoint-r{}.pth'.format(args.id_run)))
-
         #    break
-        if stop:
-            if separated:
-                sys.exit(0)  # success
-            else:
-                sys.exit(1)  # failure
+
+    # at the end of the while loop
+    if separated:  #
+        save_checkpoint()
+        print("Data is separated.", file=logs)
+        sys.exit(0)  # success
+    else:
+        # save the 'best' model
+        save_checkpoint(checkpoint=checkpoint_min)
+        sys.exit(1)  # failure
 
 
 

@@ -2,8 +2,8 @@
 
 exit_code=0
 tol=10
-supb=4096
-infb=1600
+supb=3979
+infb=3940
 ntry=10
 date=`date +%y%m%d`  # format yymmdd
 model=$1

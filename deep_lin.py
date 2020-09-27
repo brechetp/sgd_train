@@ -100,7 +100,7 @@ if __name__ == '__main__':
     #random.seed(seed)
 
     args_model = checkpoint_model['args']  # restore the previous arguments
-    output_path = os.path.join(args_model.output_root, args_model.name, args.name)
+    path_output = os.path.join(args_model.output_root, args_model.name, args.name)
 
     #model = models.cnn.CNN(1)
 
@@ -109,7 +109,7 @@ if __name__ == '__main__':
     log_fname = os.path.join(args_model.output_root, args_model.name, 'logs.txt')
 
 
-    os.makedirs(output_path, exist_ok=True)
+    os.makedirs(path_output, exist_ok=True)
 
     num_classes = utils.get_num_classes(args_model.dataset)
 
@@ -141,10 +141,11 @@ if __name__ == '__main__':
     input_dim = imsize[0]*imsize[1]*imsize[2]
 
     if not args.debug:
-        logs = open(os.path.join(output_path, 'logs_lin.txt'), 'w')
+        logs = open(os.path.join(path_output, 'logs_lin.txt'), 'w')
     else:
         logs = sys.stdout
 #     logs = None
+    logs_debug = open(os.path.join(path_output, 'debug.log'), 'w')
 
     print(os.sep.join((os.path.abspath(__file__).split(os.sep)[-2:])), file=logs)  # folder + name of the script
     print('device= {}, num of gpus= {}'.format(device, num_gpus), file=logs)
@@ -266,10 +267,11 @@ if __name__ == '__main__':
         global model
         global args
         global optimizer
+        global quant
 
         checkpoint = {
             'linear_classifier': linear_classifier.state_dict(),
-            'stats': stats,
+            'quant': quant,
             'args': args,
             'optimizer': optimizer.state_dict(),
             'epochs': epoch,
@@ -277,10 +279,22 @@ if __name__ == '__main__':
         }
         return checkpoint
 
+    def save_checkpoint(fname=None, checkpoint=None):
+        '''Save checkpoint to disk'''
+
+        global path_output
+
+        if fname is None:
+            fname = os.path.join(path_output, 'checkpoint_lin.pth')
+
+        if checkpoint is None:
+            checkpoint = get_checkpoint()
+
+        torch.save(checkpoint, fname)
 
 
     start_epoch = 0
-    DO_SANITY_CHECK = True
+    DO_SANITY_CHECK = False
 
     if 'epochs' in checkpoint.keys():
         start_epoch = checkpoint['epochs']
@@ -339,7 +353,7 @@ if __name__ == '__main__':
 
         epoch += 1 if not frozen else 0
 
-        err_min = min(err_tot.min(), err_train_hidden.min())
+        err_min = max(err_tot.min(), err_train_hidden.min())
 
         separated = frozen and err_min == 0
         frozen = err_min == 0 and not frozen # will test with frozen network next time, prevent from freezing twice in a row
@@ -403,6 +417,8 @@ if __name__ == '__main__':
             quant.loc[epoch, ('train', 'err', 'last')].min(), quant.loc[epoch, ('train', 'err', 'last')].max()),
             file=logs, flush=True)
 
+        utils.print_cuda_memory_usage(device, logs_debug, epoch)
+
 
         #fig, ax = plt.sub
         quant_reset = quant.reset_index()
@@ -424,17 +440,15 @@ if __name__ == '__main__':
 
         g.set(yscale='log')
 
-        plt.savefig(fname=os.path.join(output_path, 'losses.pdf'))
+        plt.savefig(fname=os.path.join(path_output, 'losses.pdf'))
 
         plt.close('all')
 
         if args.save_model and (epoch) % 5 == 0:  # we save every 5 epochs
-            checkpoint = get_checkpoint()
-            torch.save(checkpoint, os.path.join(output_path, 'checkpoint_lin.pth'))
+            save_checkpoint()
 
         if stop:
-            checkpoint = get_checkpoint()
-            torch.save(checkpoint, os.path.join(output_path, 'checkpoint.pth'))
+            save_checkpoint()
             if separated:
                 print("Data is separated.", file=logs)
                 sys.exit(0)  # success
@@ -452,7 +466,7 @@ if __name__ == '__main__':
         #        'epochs': epoch,
         #        #'seed': seed,
         #    }
-        #    torch.save(checkpoint, os.path.join(output_path, 'checkpoint_lin.pth'))
+        #    torch.save(checkpoint, os.path.join(path_output, 'checkpoint_lin.pth'))
         #    print('the data is separable!', file=logs)
         #    sys.exit(1)
 

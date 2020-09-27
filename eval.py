@@ -235,7 +235,8 @@ def main(argv):
 
 
                 epoch = checkpoint['epochs']
-                stats = checkpoint['stats']
+                stats = checkpoint.get('stats', None)
+                quant = checkpoint.get('quant', None)
 
                 df = np_to_pd(stats)
 

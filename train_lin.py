@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import pandas as pd
 import os
 import sys
 from torchsummary import summary
@@ -153,7 +154,9 @@ if __name__ == '__main__':
     except RuntimeError as e:
         print("Can't load mode (error {})".format(e))
 
+    #linear_classifier = models.classifiers.Linear(model, args.ntry, args.keep_ratio).to(device)
     linear_classifier = models.classifiers.Linear(model, args.ntry, args.keep_ratio).to(device)
+
 
     if 'linear_classifier' in checkpoint.keys():
         linear_classifier.load_state_dict(checkpoint['linear_classifier'])
@@ -198,20 +201,23 @@ if __name__ == '__main__':
     if 'lr_scheduler' in checkpoint.keys():
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
 
+    names=['set', 'stat', 'layer']
+    tries = np.arange(args.ntry)
+    sets = ['train', 'test']
+    stats = ['loss', 'err']
+    layers = ['last', 'hidden']
+    columns=pd.MultiIndex.from_product([sets, stats, layers, tries], names=names)
+    index = pd.Index(np.arange(1, args.nepochs+1), name='epoch')
+    quant = pd.DataFrame(columns=columns, index=index, dtype=float)
+
+    quant.sort_index(axis=1, inplace=True)  # sort for quicker access
+
+    if 'quant' in checkpoint.keys():
+        quant.update(checkpoint['quant'])
+
     stats = {
-        'err_train': [],
-        'err_hidden': [],
-        'err_hidden_test': [],
-        'err_test': [],
-        'err_test': [],
-        'loss_train': [],
-        'loss_test': [],
-        'loss_hidden_test': [],
-        'loss_hidden_train': [],
-        'epochs': [],
         'num_parameters': num_parameters,
         'num_samples_train': num_samples_train,
-        'lr': [],
     }
 
     if 'stats' in checkpoint.keys():
@@ -245,6 +251,33 @@ if __name__ == '__main__':
         output = - cond + input.logsumexp(dim=2)
         return output
 
+    def get_checkpoint():
+        '''Get current checkpoint'''
+        global model, stats, quant, args, optimizer, lr_scheduler, epoch
+
+        checkpoint = {
+                'linear_classifier': linear_classifier.state_dict(),
+                'stats': stats,
+            'quant': quant,
+                'args': args,
+                'optimizer': optimizer.state_dict(),
+                'epochs': epoch,
+                    }
+
+        return checkpoint
+
+    def save_checkpoint(fname=None, checkpoint=None):
+        '''Save checkpoint to disk'''
+
+        global path_output
+
+        if fname is None:
+            fname = os.path.join(path_output, 'checkpoint_lin.pth')
+
+        if checkpoint is None:
+            checkpoint = get_checkpoint()
+
+        torch.save(checkpoint, fname)
 
 
     start_epoch = 0
