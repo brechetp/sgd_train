@@ -48,7 +48,7 @@ if __name__ == '__main__':
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
     parser.add_argument('--ntry', type=int, default=10, help='The number of permutations to test')
-    parser.add_argument('-R', '--remove', type=int, help='the number of neurons to remove at each layer')
+    parser.add_argument('-R', '--remove', type=int, default=100, help='the number of neurons to remove at each layer')
     parser_model = parser.add_mutually_exclusive_group(required=True)
     parser_model.add_argument('--model', help='path of the model to separate')
     parser_model.add_argument('--checkpoint', help='path of the previous computation checkpoint')
@@ -205,6 +205,8 @@ if __name__ == '__main__':
         #parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
         #parameters, lr=args.learning_rate, momentum=0.95
     )
+
+    print('Optimizer: {}'.format(optimizer), file=logs, flush=True)
     #lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.9)
 
@@ -356,7 +358,7 @@ if __name__ == '__main__':
         frozen = err_min == 0 and not frozen # will test with frozen network next time, prevent from freezing twice in a row
 
         if frozen:
-            print("Freezing the next iteration", file=logs, flush=True)
+            print("Freezing the next iteration", file=logs)
 
         stop = (separated
                 or epoch > start_epoch + args.nepochs
@@ -415,7 +417,7 @@ if __name__ == '__main__':
 
         g.set(yscale='log')
         #g.set(title='ds = {}, width = {}, removed = {}, Tries = {}'.format(args_model.dataset, args_model.width, args.remove, args.ntry))
-        g.fig.subplots_adjust(top=0.9, left=0.125)
+        g.fig.subplots_adjust(top=0.9, left=0.06)
         g.fig.suptitle('ds = {}, width = {}, removed = {}, Tries = {}, name = {}'.format(args_model.dataset, args_model.width, args.remove, args.ntry, args.name))
         #g.set_axis_labels
 

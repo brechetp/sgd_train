@@ -235,7 +235,7 @@ class MultiLinear(nn.Module):
 class ClassifierFCN(nn.Module):
     '''The classifiers plugged into a FCN network'''
 
-    def __init__(self, model: FCN, num_tries=10, Rs=None, depth_max=None):
+    def __init__(self, model: FCN, num_tries, Rs, depth_max=None):
 
         super().__init__()
         # the indices of the features (i.e. after the activations
@@ -254,9 +254,7 @@ class ClassifierFCN(nn.Module):
         L = self.n_layers = len(self.indices)  # the total number of layers to plug into
         n_classes = model.main[-1].out_features
 
-        if Rs is None:  # the removed neurons
-            Rs = [N//5 for N in self.size_out]
-        elif isinstance(Rs, int):
+        if isinstance(Rs, int):
             Rs = L*[Rs]
 
         # each network idx will have
