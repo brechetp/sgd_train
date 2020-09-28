@@ -140,7 +140,7 @@ def get_dataloader(train_dataset, test_dataset, batch_size, ss_factor=1., size_m
     return train_loader,train_size, val_loader, val_size, test_loader, test_size
 
 
-def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, fct_linear=nn.Linear, args_linear=[], kwargs_linear={}, tanh=False, out_layer=True, batchnorm=False, batchnorm_in=False):
+def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, args_linear=[], kwargs_linear={}, tanh=False, out_layer=True, batchnorm=False, batchnorm_in=False):
     '''Constructs layers  with each layer being of sizes[i]
     with specified init and end size in sizes[0] sizes[-1]
 
@@ -165,7 +165,7 @@ def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, fct
         # adds the layer
         layers.append((
                 '{}{}-{}-{}'.format(nn.Linear.__name__, idx, prev_size, size),
-                fct_linear(prev_size, size, *args_linear, **kwargs_linear)
+                nn.Linear(prev_size, size, *args_linear, **kwargs_linear)
                 ))
         if batchnorm:
             if idx == 1 and not out_layer and not batchnorm_in:  # for discriminator network, no normalization at the beginning
@@ -189,7 +189,7 @@ def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, fct
     if out_layer:
         layers.append((
             '{}{}-{}-{}'.format(nn.Linear.__name__, idx+1, size, sizes[-1]),
-            fct_linear(size, sizes[-1], *args_linear, **kwargs_linear)
+            nn.Linear(size, sizes[-1], *args_linear, **kwargs_linear)
             ))
 
         if tanh:
@@ -214,40 +214,35 @@ def construct_mmlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, ar
 '''
 
     idx = 0
-    size = (N, R) = sizes[0]  # total vs removed number of neurons for the mask
+    (N, R) = sizes[0]  # total vs removed number of neurons for the mask
     layers = []
     norm_layer = nn.BatchNorm1d
-    if fct_act is nn.ReLU and kwargs_act == {}:
-        kwargs_act = {'inplace': True}
+    if fct_act is nn.ReLU and args_act == {}:
+        args_act = [ True ]  # inplace
     MultiLinear = models.classifiers.MultiLinear
     LinearMasked = models.classifiers.LinearMasked
+    layers.append(('{}-{}-{}'.format(LinearMasked.__name__, N, R),
+                    LinearMasked((N, R), sizes[1], num_tries=num_tries),
+                    ))
+    idx = 0
+    size = sizes[1]  # init
 
-    for idx, new_size in enumerate(sizes[1:-1], 1):  # for all layers specified in sizes
+    for idx, new_size in enumerate(sizes[2:], 1):  # for all layers specified in sizes
         # switch the sizes
 
         prev_size, size = size, new_size
 
-        if idx == 1:  # for the first layer
-            layers.append(('MultiLinear-{}-{}'.format(N, R),
-                            LinearMasked((N, R), size, num_tries=num_tries),
-                           ))
-        else:
-        # adds the layer
-            layers.append((
-                    '{}{}-{}-{}'.format(nn.Linear.__name__, idx, prev_size, size),
-                    MultiLinear(prev_size, size, num_tries=num_tries),
-                    ))
-        # adds the non linear activation function
         layers.append((
-                '{}{}-{}'.format(fct_act.__name__, idx, size),
+                '{}{}-{}'.format(fct_act.__name__, idx, prev_size),
                 fct_act(*args_act, **kwargs_act)
                 ))
+        layers.append((
+                '{}{}-{}-{}'.format(MultiLinear.__name__, idx, prev_size, size),
+                MultiLinear(prev_size, size, num_tries=num_tries),
+                ))
+    # adds the non linear activation function
 
     # at the end, appends the out layer without activation function
-    layers.append((
-        '{}{}-{}-{}'.format(nn.Linear.__name__, idx+1, size, sizes[-1]),
-        MultiLinear(size, sizes[-1], num_tries=num_tries)
-        ))
 
     return OrderedDict(layers)
 

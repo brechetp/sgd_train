@@ -169,7 +169,7 @@ if __name__ == '__main__':
     print('Number of parameters: {}'.format(num_parameters), file=logs)
     print('Number of training samples: {}'.format(num_samples_train), file=logs)
     print('Number of testing samples: {}'.format(size_test), file=logs)
-    print('Layer dimensions'.format(classifier.neurons), file=logs)
+    print('Layer dimensions'.format(classifier.size_out), file=logs)
     print('Image dimension: {}'.format(imsize), file=logs)
 
     #summary(model,  [imsize, (1,)])
@@ -202,11 +202,12 @@ if __name__ == '__main__':
     if 'lr_scheduler' in checkpoint.keys():
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
 
-    names=['set', 'stat', 'layer']
-    tries = np.arange(args.ntry)
     sets = ['train', 'test']
     stats = ['loss', 'err']
-    layers = ['last', 'hidden']  # TODO range(n_layer)
+    layers = np.arange(classifier.n_layers)  # TODO range(n_layer)
+    tries = np.arange(args.ntry)
+
+    names=['set', 'stat', 'layer', 'try']
     columns=pd.MultiIndex.from_product([sets, stats, layers, tries], names=names)
     index = pd.Index(np.arange(1, args.nepochs+1), name='epoch')
     quant = pd.DataFrame(columns=columns, index=index, dtype=float)
@@ -232,7 +233,7 @@ if __name__ == '__main__':
 
         returns: err of size LxT
         '''
-        return  (x.argmax(dim=3)!=y).float().mean(dim=1)
+        return  (x.argmax(dim=3)!=y).float().mean(dim=2)
 
     #mse_loss = nn.MSELoss()
     #ce_loss_check = nn.CrossEntropyLoss(reduction='none')
@@ -281,38 +282,77 @@ if __name__ == '__main__':
         torch.save(checkpoint, fname)
 
 
+    DO_SANITY_CHECK = False
     start_epoch = 0
+    stop = False
+    separated = False
+    epoch = start_epoch - 1 if DO_SANITY_CHECK else start_epoch
+    frozen = False
+
 
     if 'epochs' in checkpoint.keys():
         start_epoch = checkpoint['epochs']
 
-    for epoch in tqdm(range(start_epoch, start_epoch+args.nepochs)):
+    while not stop:
+    #for epoch in tqdm(range(start_epoch, start_epoch+args.nepochs)):
 
 
-        classifier.train()
-        loss_tot = np.zeros((num_layers, args.ntry))  # for the
-        #loss_hidden_tot = np.zeros(classifier.L)  # for the
-        ones = torch.ones((num_layers, args.ntry), device=device, dtype=dtype)
-        err_train = np.eros((num_layers, args.ntry))
-        #ones_hidden = torch.ones(classifier.L, device=device, dtype=dtype)
+        if epoch == start_epoch-1:
+            err = 0
+        else:
+            classifier.train()
+            loss_train = np.zeros((num_layers, args.ntry))  # for the
+            #loss_hidden_tot = np.zeros(classifier.L)  # for the
+            ones = torch.ones((num_layers, args.ntry), device=device, dtype=dtype)
+            err_train = np.zeros((num_layers, args.ntry))
+            #ones_hidden = torch.ones(classifier.L, device=device, dtype=dtype)
+
         for idx, (x, y) in enumerate(train_loader):
 
 
             x = x.to(device)
             y = y.to(device)
-            optimizer.zero_grad()
-            out_class = classifier(x)  # LxTxBxC, LxBxC  # each output for each layer
-            loss = ce_loss(out_class, y)  # LxTxB
-            #loss_hidden = ce_loss(out_hidden, y)
-            err = zero_one_loss(out_class, y)  # LxT
-            err_train = (idx * err_train + err.detach().cpu().numpy()) / (idx+1)
-            loss_tot = (idx * loss_tot + loss.mean(dim=2).detach().cpu().numpy()) / (idx+1)
-           # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
-            loss.mean(dim=2).backward(ones)
-           # loss_hidden.mean(dim=1).backward(ones_hidden)
-            optimizer.step()
+            if epoch == start_epoch -1:
+                out = model(x).unsqueeze(0).unsqueeze(0) # 1x1xBxC
+                #loss = ce_loss(out, y).mean()  # TxB
+                err += zero_one_loss(out,y).mean().detach().cpu().numpy()  # just check if the number of error is 0
+            else:
+                optimizer.zero_grad()
+                out_class = classifier(x)  # LxTxBxC, LxBxC  # each output for each layer
+                loss = ce_loss(out_class, y)  # LxTxB
+                #loss_hidden = ce_loss(out_hidden, y)
+                err = zero_one_loss(out_class, y)  # LxT
+                err_train = (idx * err_train + err.detach().cpu().numpy()) / (idx+1)
+                loss_train = (idx * loss_train + loss.mean(dim=2).detach().cpu().numpy()) / (idx+1)
+            # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
+                if not frozen:  # if we have to update the weights
+                    loss.mean(dim=2).backward(ones)
+                # loss_hidden.mean(dim=1).backward(ones_hidden)
+                    optimizer.step()
 
-        quant.loc[pd.IndexSlice[epoch, ('train', 'err')]] =  err_train / idx
+        if epoch == start_epoch - 1:  # check if we have null training error (sanity check)
+            print('Error: ', err, file=logs, flush=True)
+            assert err == 0
+            epoch += 1
+            continue
+
+        epoch += 1 if not frozen else 0
+
+        err_min = err_train.min(axis=1).max(axis=0)
+
+        separated = frozen and err_min == 0
+        frozen = err_min == 0 and not frozen # will test with frozen network next time, prevent from freezing twice in a row
+
+        if frozen:
+            print("Freezing the next iteration", file=logs, flush=True)
+
+        stop = (separated
+                or epoch > start_epoch + args.nepochs
+                )
+
+
+        quant.loc[pd.IndexSlice[epoch, ('train', 'err')]] =  err_train.reshape(-1)
+        quant.loc[pd.IndexSlice[epoch, ('train', 'loss')]] =  loss_train.reshape(-1)
 
         err_tot_test = np.zeros(args.ntry)
         err_test = np.zeros((num_layers, args.ntry))
@@ -331,105 +371,50 @@ if __name__ == '__main__':
                 err_test += zero_one_loss(out_test, y).detach().cpu().numpy()
 
 
-        quant.loc[pd.IndexSlice[epoch, ('test', 'err')]] =  err_train / idx
+        quant.loc[pd.IndexSlice[epoch, ('train', 'err')]] =  err_test.reshape(-1)
+        quant.loc[pd.IndexSlice[epoch, ('train', 'loss')]] =  loss_test.reshape(-1)
 
 
 
         #print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
-        print('ep {}, train loss (min/max): {:g} / {:g}, err (min/max): {:g}/{:g}, progress: {}/{}'.format(
-            epoch, stats['loss_train'][-1].min(), stats['loss_train'][-1].max(),
-            stats['err_train'][-1].min(), stats['err_train'][-1].max(), idx, len(train_loader)),
-            #stats['loss_test']['ce'][-1], stats['loss_test']['zo'][-1]),
+        print('ep {}, train loss (min/max): {:g} / {:g}, err (min/max): {:g}/{:g}'.format(
+            epoch, quant.loc[epoch, ('train', 'loss')].min(), quant.loc[epoch, ('train', 'loss')].max(),
+            quant.loc[epoch, ('train', 'err')].min(), quant.loc[epoch, ('train', 'err')].max()),
             file=logs, flush=True)
 
 
-        fig, axes = plt.subplots(2, 1, squeeze=True, sharex=True)
-        axes[0].plot(stats['epochs'], stats['err_train'],  marker='o')
-        axes[1].plot(stats['epochs'], stats['err_test'], marker='o')
-        axes[0].set_title('Train')
-        axes[1].set_title('Test')
-        fig.suptitle(f'ntry={args.ntry}, layers={classifier.neurons}, keep_ratio={classifier.keep_ratio}')
-        axes[0].set_yscale('linear')
-        axes[1].set_yscale('linear')
+        #fig, ax = plt.sub
+        quant_reset = quant.reset_index()
+        quant_plot = pd.melt(quant_reset, id_vars='epoch')
+        g = sns.relplot(
+            data = quant_plot,
+            col='layer',
+            hue='set',
+            row='stat',
+            x='epoch',
+            y='value',
+            kind='line',
+            ci=100,  # the whole spectrum of the data
+            facet_kws={
+            'sharey': False,
+            'sharex': True
+        }
+        )
 
-        plt.savefig(fname=os.path.join(output_path, 'zero_one_loss.pdf'))
+        g.set(yscale='log')
 
-        fig, axes= plt.subplots(2, 1, squeeze=True, sharey=True, sharex=True)
-
-        axes[0].plot(stats['epochs'], stats['err_hidden'], marker='o')
-        axes[0].legend([f'Layer {i}' for i in range(1, 1+classifier.L)])
-        axes[0].set_title('Train')
-
-        axes[0].set_ylabel('Error')
-        axes[0].set_yscale('linear')
-
-        axes[1].plot(stats['epochs'], stats['err_hidden_test'], label=[f'Layer {i}' for i in range(1, 1+classifier.L)], marker='x')
-        #ax.plot(stats['epochs'], stats['err_test'], label='Test')
-        axes[1].legend([f'Layer {i}' for i in range(1, 1+classifier.L)])
-        axes[1].set_title('Test')
-        axes[1].set_yscale('linear')
-        axes[1].set_ylabel('Error')
-
-        fig.suptitle(f'layers={classifier.neurons}')
-        for ax in axes:
-            ax.label_outer()
-        plt.savefig(fname=os.path.join(output_path, 'zo-layers.pdf'))
-
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.plot(stats['epochs'], stats['loss_train'])
-        #ax.plot(stats['epochs'], stats['loss_test']['ce'], label='Test')
-        #ax.legend()
-        ax.set_title('Cross-entropy loss for the tries')
-        ax.set_yscale('linear')
-        plt.savefig(fname=os.path.join(output_path, 'cross_entropy_loss.pdf'))
-
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.plot(stats['epochs'], stats['loss_hidden_train'])
-        #ax.plot(stats['epochs'], stats['loss_test']['ce'], label='Test')
-        ax.legend([f'Layer {i}' for i in range(1, 1+classifier.L)])
-        ax.set_title('Cross-entropy loss for the layers')
-        ax.set_yscale('linear')
-        plt.savefig(fname=os.path.join(output_path, 'cross_entropy_loss_hidden.pdf'))
-
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.plot(stats['epochs'], stats['loss_hidden_test'])
-        #ax.plot(stats['epochs'], stats['loss_test']['ce'], label='Test')
-        ax.legend([f'Layer {i}' for i in range(1, 1+classifier.L)])
-        ax.set_title('Cross-entropy loss for the layers')
-        ax.set_yscale('linear')
-        plt.savefig(fname=os.path.join(output_path, 'cross_entropy_loss_hidden_test.pdf'))
-        #fig=plt.figure()
-        #plt.plot(stats['epochs'], stats['lr'], label='lr')
-        #plt.legend()
-        #plt.savefig(fname=os.path.join(output_path, 'lr.pdf'))
+        plt.savefig(fname=os.path.join(path_output, 'losses.pdf'))
 
         plt.close('all')
 
-        if args.save_model and (epoch) % 5 == 0 or (epoch==start_epoch+args.nepochs):  # we save every 5 epochs
-            checkpoint = {
-                'classifier': classifier.state_dict(),
-                'stats': stats,
-                'args': args,
-                'optimizer': optimizer.state_dict(),
-                'epochs': epoch,
-                #'seed': seed,
-            }
-            torch.save(checkpoint, os.path.join(output_path, 'checkpoint_lin.pth'))
+        if args.save_model and (epoch) % 5 == 0:  # we save every 5 epochs
+            save_checkpoint()
 
-        if err_train.min() == 0:  # the data has been separated
-
-            checkpoint = {
-                'classifier': classifier.state_dict(),
-                'stats': stats,
-                'args': args,
-                'optimizer': optimizer.state_dict(),
-                'epochs': epoch,
-                #'seed': seed,
-            }
-            torch.save(checkpoint, os.path.join(output_path, 'checkpoint_lin.pth'))
-            print('the data is separable!', file=logs)
-            sys.exit(1)
+        if stop:
+            if separated:
+                print("Data is separated.", file=logs)
+                sys.exit(0)  # success
+            else:
+                print("Data is NOT separated.", file=logs)
+                sys.exit(1)  # failure
 

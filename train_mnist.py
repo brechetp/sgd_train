@@ -33,7 +33,7 @@ except:
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser('Training a classifier to inspect the layers')
-    parser.add_argument('--dataset', '-dat', default='mnist', type=str, help='dataset')
+    parser.add_argument('--dataset', '-dat', default='cifar10', type=str, help='dataset')
     parser.add_argument('--dataroot', '-dr', default='./data/', help='the root for the input data')
     parser.add_argument('--output_root', '-o', type=str, help='output root for the results')
     parser.add_argument('--name', default='debug', type=str, help='the name of the experiment')
@@ -46,7 +46,11 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
-    parser.add_argument('--coefficient', '-c', type=float, default=1, help='The coefficient for the minimum width layer')
+    net_size = parser.add_mutually_exclusive_group()
+    net_size.add_argument('--coefficient', '-c', type=float, default=1, help='The coefficient for the minimum width layer')
+    net_size.add_argument('--width', '-w', type=int, help='The width of the (last) layer')
+    #net_size.add_argument('--num_parameters', type=int, help='the total number of parameters')
+    #parser.set_defaults(
     parser.add_argument('--last_layer', type=int, default=None, help='the number of neurons for the last layer')
     parser.add_argument('--net_shape', '-nt', default='square', choices=['square', 'linear'], help='how the network is constructed')
     parser.add_argument('--shuffle', default=0, type=float, help='shuffle a ratio of the target samples')
@@ -181,7 +185,11 @@ if __name__ == '__main__':
 
 
 
-    min_width = int(args.coefficient *math.sqrt(size_train)+0.5)
+    if args.width is None:
+        min_width = int(args.coefficient * math.sqrt(size_train)+0.5)
+    else:
+        min_width = args.width
+
     if args.net_shape == 'square':
         max_width = min_width
     elif args.net_shape == 'linear':

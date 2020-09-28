@@ -201,19 +201,19 @@ class MultiLinear(nn.Module):
     '''Define a parallel linear layer'''
 
 
-    def __init__(self, n_tries, in_features, out_features):
+    def __init__(self, in_features, out_features, num_tries=10):
 
         super().__init__()
 
-        weight = torch.empty((n_tries, in_features, out_features))
-        bias = torch.empty((n_tries, 1, out_features))
+        weight = torch.empty((num_tries, in_features, out_features))
+        bias = torch.empty((num_tries, 1, out_features))
 
         init_kaiming(weight, bias)
 
         # size of weight: TxNxD
         self.weight = nn.Parameter(weight)
         self.bias = nn.Parameter(bias)
-        self.n_tries = n_tries
+        self.num_tries = num_tries
         self.in_features = in_features
         self.out_features = out_features
 
@@ -229,7 +229,7 @@ class MultiLinear(nn.Module):
 
     def extra_repr(self):
 
-        return "n_tries={}, in_features={}, out_features={}".format(self.n_tries, self.in_features, self.out_features)
+        return "in_features={}, out_features={}, num_tries={}".format(self.in_features, self.out_features, self.num_tries)
 
 
 class ClassifierFCN(nn.Module):
@@ -237,16 +237,18 @@ class ClassifierFCN(nn.Module):
 
     def __init__(self, model: FCN, num_tries=10, Rs=None):
 
+        super().__init__()
         # the indices of the features (i.e. after the activations
         # and the size of the output network
-        self.indices  =[ (idx, layer.out_features) for idx,layer in enumerate(model.main) if isinstance(layer, nn.ReLU)]
+        self.indices  =[ idx for idx, layer in enumerate(model.main) if isinstance(layer, nn.ReLU)]
+        self.size_out = [layer.out_features for layer in model.main[-2::-1] if isinstance(layer, nn.Linear)]
         self.model = model
 
-        n_layers = len(self.indices)  # the total number of layers to plug into
+        self.n_layers = len(self.indices)  # the total number of layers to plug into
         n_classes = model.main[-1].out_features
 
         if Rs is None:
-            Rs = [N//5 for (_,N) in self.indices[::-1]]
+            Rs = [N//5 for N in self.size_out]
 
         # each network idx will have
         # 1. a random mask removing R neurons
@@ -257,7 +259,8 @@ class ClassifierFCN(nn.Module):
         sizes = []
 
 
-        for idx, (_, N) in enumerate(self.indices[::-1]):
+
+        for idx, N in enumerate(self.size_out):
             R = Rs[idx]
             sizes = [(N, R)] + idx * [R] + [n_classes]
             net = utils.construct_mmlp_net(sizes, fct_act=nn.ReLU)
@@ -270,18 +273,18 @@ class ClassifierFCN(nn.Module):
 
         # go through the different layers inside main
 
-        feats=[x]
+        feats=[x.view(x.size(0), -1)]
         idx_prev=0
         with torch.no_grad():
-            for idx,_ in self.indices:
+            for idx in self.indices:
                 # for all the linear layers (marked by their indices in
                 # self.indices)
                 feats.append(self.model.main[idx_prev:idx](feats[-1]))
                 idx_prev = idx
 
-        out = [ net(feat.clone()) for (net, feat) in zip(self.networks, feats[:0:-1])]  # all feats except for the first one = x
+        out = [ net(feat.clone()).unsqueeze(0) for (net, feat) in zip(self.networks, feats[:0:-1])]  # all feats except for the first one = x
 
-        return out
+        return torch.cat(out)
 
 
 class LinearMasked(nn.Module):
@@ -345,7 +348,7 @@ class LinearMasked(nn.Module):
 
     def extra_repr(self, **kwargs):
 
-        return "n_tries={}, in_features={} (/ {}), out_features={}".format(self.num_tries, self.N-self.R, self.N, self.out_features)
+        return "in_features={} (/ {}), out_features={}, num_tries={}".format(self.N-self.R, self.N, self.out_features, self.num_tries)
 
 
 
