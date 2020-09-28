@@ -41,14 +41,14 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', '-dat', default='mnist', type=str, help='dataset')
     parser.add_argument('--dataroot', '-droot', default='./data/', help='the root for the input data')
     parser.add_argument('--name', default='linear', type=str, help='the name of the experiment')
-    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-1, help='leraning rate')
+    parser.add_argument('--learning_rate', '-lr', nargs='*', type=float, default=[1e-2], help='leraning rate')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=100, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
     parser.add_argument('--ntry', type=int, default=10, help='The number of permutations to test')
-    parser.add_argument('--keep_ratio', type=float, default=0.5, help='The ratio of neurons to keep')
+    parser.add_argument('-R', '--remove', type=int, help='the number of neurons to remove at each layer')
     parser_model = parser.add_mutually_exclusive_group(required=True)
     parser_model.add_argument('--model', help='path of the model to separate')
     parser_model.add_argument('--checkpoint', help='path of the previous computation checkpoint')
@@ -56,6 +56,7 @@ if __name__ == '__main__':
     parser_device = parser.add_mutually_exclusive_group()
     parser_device.add_argument('--cpu', action='store_true', dest='cpu', help='force the cpu model')
     parser_device.add_argument('--cuda', action='store_false', dest='cpu')
+    parser.add_argument('--depth_max', type=int, help='the maximum depth to which operate')
     parser.set_defaults(cpu=False)
 
 
@@ -101,16 +102,16 @@ if __name__ == '__main__':
 
 
     args_model = checkpoint_model['args']  # restore the previous arguments
-    output_path = os.path.join(args_model.output_root, args_model.name, args.name)
+    path_output = os.path.join(args_model.output_root, args_model.name, args.name)
     # Logs
     log_fname = os.path.join(args_model.output_root, args_model.name, 'logs.txt')
 
 
-    os.makedirs(output_path, exist_ok=True)
+    os.makedirs(path_output, exist_ok=True)
 
 
     if not args.debug:
-        logs = open(os.path.join(output_path, 'logs_lin.txt'), 'w')
+        logs = open(os.path.join(path_output, 'logs_lin.txt'), 'w')
     else:
         logs = sys.stdout
 #     logs = None
@@ -155,7 +156,7 @@ if __name__ == '__main__':
         print("Can't load mode (error {})".format(e))
 
     #classifier = models.classifiers.Linear(model, args.ntry, args.keep_ratio).to(device)
-    classifier = models.classifiers.ClassifierFCN(model, num_tries=args.ntry).to(device)
+    classifier = models.classifiers.ClassifierFCN(model, num_tries=args.ntry, Rs=args.remove, depth_max=args.depth_max).to(device)
 
 
     if 'classifier' in checkpoint.keys():
@@ -182,16 +183,27 @@ if __name__ == '__main__':
 
     print('Linear classifier: {}'.format(str(classifier)), file=logs)
     #parameters = [ p for p in model.parameters() if not feature_extraction or p.requires_grad ]
-    parameters = list(classifier.parameters())
+    parameters = [net.parameters() for net in classifier.networks]
+    if len(args.learning_rate) <= 2:
+        lr_range = 2*[args.learning_rate] if len(args.learning_rate) == 1 else args.learning_rate
+        #lrs = np.linspace(lr_range[0], lr_range[1], classifier.n_layers)
+        lrs = np.geomspace(lr_range[0], lr_range[1], classifier.n_layers)
+    elif len(args.learning_rate) == classifier.n_layers:
+        lrs  = args.learning_rate
+    else:
+        raise ValueError('Parameter learning_rate not understood (n_layers ={}, #lr = {})'.format(classifier.n_layers, len(args.learning_rate)))
+
+    param_list = [{'params': param, 'lr': lr} for param, lr in zip(parameters, lrs)]
+
 
     #optimizer = torch.optim.AdamW(
     #        parameters, lr=args.learning_rate, betas=(0.95, 0.999), weight_decay=0,
     #        )
     #optimizer = torch.optim.RMSprop(parameters, lr=args.learning_rate)
 
-    optimizer = torch.optim.SGD(
+    optimizer = torch.optim.SGD(param_list, momentum=0.95
         #parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
-        parameters, lr=args.learning_rate, momentum=0.95
+        #parameters, lr=args.learning_rate, momentum=0.95
     )
     #lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.9)
@@ -204,8 +216,8 @@ if __name__ == '__main__':
 
     sets = ['train', 'test']
     stats = ['loss', 'err']
-    layers = np.arange(classifier.n_layers)  # TODO range(n_layer)
-    tries = np.arange(args.ntry)
+    layers = np.arange(1, 1+classifier.n_layers)  # the different layers, forward order
+    tries = np.arange(1, 1+args.ntry)  # the different tries
 
     names=['set', 'stat', 'layer', 'try']
     columns=pd.MultiIndex.from_product([sets, stats, layers, tries], names=names)
@@ -371,8 +383,8 @@ if __name__ == '__main__':
                 err_test += zero_one_loss(out_test, y).detach().cpu().numpy()
 
 
-        quant.loc[pd.IndexSlice[epoch, ('train', 'err')]] =  err_test.reshape(-1)
-        quant.loc[pd.IndexSlice[epoch, ('train', 'loss')]] =  loss_test.reshape(-1)
+        quant.loc[pd.IndexSlice[epoch, ('test', 'err')]] =  (err_test/idx).reshape(-1)
+        quant.loc[pd.IndexSlice[epoch, ('test', 'loss')]] =  loss_test.reshape(-1)
 
 
 
@@ -396,12 +408,16 @@ if __name__ == '__main__':
             kind='line',
             ci=100,  # the whole spectrum of the data
             facet_kws={
-            'sharey': False,
+            'sharey': 'row',
             'sharex': True
         }
         )
 
         g.set(yscale='log')
+        #g.set(title='ds = {}, width = {}, removed = {}, Tries = {}'.format(args_model.dataset, args_model.width, args.remove, args.ntry))
+        g.fig.subplots_adjust(top=0.9, left=0.125)
+        g.fig.suptitle('ds = {}, width = {}, removed = {}, Tries = {}, name = {}'.format(args_model.dataset, args_model.width, args.remove, args.ntry, args.name))
+        #g.set_axis_labels
 
         plt.savefig(fname=os.path.join(path_output, 'losses.pdf'))
 

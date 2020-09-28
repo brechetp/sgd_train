@@ -235,20 +235,29 @@ class MultiLinear(nn.Module):
 class ClassifierFCN(nn.Module):
     '''The classifiers plugged into a FCN network'''
 
-    def __init__(self, model: FCN, num_tries=10, Rs=None):
+    def __init__(self, model: FCN, num_tries=10, Rs=None, depth_max=None):
 
         super().__init__()
         # the indices of the features (i.e. after the activations
         # and the size of the output network
-        self.indices  =[ idx for idx, layer in enumerate(model.main) if isinstance(layer, nn.ReLU)]
-        self.size_out = [layer.out_features for layer in model.main[-2::-1] if isinstance(layer, nn.Linear)]
+        indices  =[ idx for idx, layer in enumerate(model.main) if isinstance(layer, nn.ReLU)]
+        size_out = [layer.out_features for layer in model.main[:-1] if isinstance(layer, nn.Linear)]
+
+        if depth_max is None:
+            depth_max = len(indices)
+
+        self.indices = indices[:depth_max]
+        self.size_out = size_out[:depth_max]
+
         self.model = model
 
-        self.n_layers = len(self.indices)  # the total number of layers to plug into
+        L = self.n_layers = len(self.indices)  # the total number of layers to plug into
         n_classes = model.main[-1].out_features
 
-        if Rs is None:
+        if Rs is None:  # the removed neurons
             Rs = [N//5 for N in self.size_out]
+        elif isinstance(Rs, int):
+            Rs = L*[Rs]
 
         # each network idx will have
         # 1. a random mask removing R neurons
@@ -260,10 +269,10 @@ class ClassifierFCN(nn.Module):
 
 
 
-        for idx, N in enumerate(self.size_out):
-            R = Rs[idx]
-            sizes = [(N, R)] + idx * [R] + [n_classes]
-            net = utils.construct_mmlp_net(sizes, fct_act=nn.ReLU)
+        for idx, (N, R) in enumerate(zip(self.size_out, Rs), 1):
+            depth = L-idx
+            sizes = [(N, R)] + depth * [R] + [n_classes]
+            net = utils.construct_mmlp_net(sizes, fct_act=nn.ReLU, num_tries=num_tries)
             self.networks.append(net)
 
             #sizes =
@@ -282,7 +291,8 @@ class ClassifierFCN(nn.Module):
                 feats.append(self.model.main[idx_prev:idx](feats[-1]))
                 idx_prev = idx
 
-        out = [ net(feat.clone()).unsqueeze(0) for (net, feat) in zip(self.networks, feats[:0:-1])]  # all feats except for the first one = x
+        out = [ net(feat.clone()).unsqueeze(0) for (net, feat) in zip(self.networks, feats[1:])]  # all feats except for the first one = x
+        # in the forward order
 
         return torch.cat(out)
 
