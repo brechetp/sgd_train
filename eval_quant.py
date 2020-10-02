@@ -31,7 +31,7 @@ def eval_model_df(df, output_path):
     df_plot = pd.melt(df_reset, id_vars='epoch')
     g = sns.relplot(
         data = df_plot.loc[:, df.columns.get_level_values('try')==1],
-        col='stat',
+        col='layer',
         #hue='dataset',
         x='epoch',
         y='value',
@@ -106,6 +106,8 @@ def eval_lin_df(df, output_path):
     )
     g.set(yscale='linear')
     plt.savefig(fname=os.path.join(output_path, 'losses_lin.pdf'))
+    g.set(yscale='log')
+    plt.savefig(fname=os.path.join(output_path, 'losses_log.pdf'))
 
 
 def eval_lin(stats, output_path):
@@ -224,15 +226,27 @@ def main(argv):
                     continue
                 os.makedirs(output_path, exist_ok=True)
 
-                idx_hidden, idx_last = quant.loc[epoch, ('train', 'err', 'hidden')].argmin(), quant.loc[epoch, ('train', 'err', 'last')].argmin()
+                n_layers = len(quant.columns.levels[2])  # the layers
+                #columns = quant.columns.name
+                indices = np.zeros(n_layers, dtype=int)
+
+
+                for idx in range(n_layers):
+                    indices[idx] = quant.loc[epoch, ('train', 'err', idx+1)].argmin() +1  # the try are 1 indexed
+
+                # remove the column index 'try'
                 cols = pd.MultiIndex.from_product(quant.columns.levels[:-1], names=quant.columns.names[:-1])
                 newdf = pd.DataFrame(columns=cols, index=quant.index)
-                newdf.loc[:, newdf.columns.get_level_values('layer') =='hidden'] = quant.xs(('hidden', idx_hidden), axis=1, level=[2, 3], drop_level=False).droplevel('try', axis=1)
-                newdf.loc[:, newdf.columns.get_level_values('layer') == 'last'] = quant.xs(('last', idx_last), axis=1, level=[2, 3], drop_level=False).droplevel('try', axis=1)
+
+                for idx in range(n_layers):
+                    newdf.loc[:, newdf.columns.get_level_values('layer') ==idx+1] = quant.xs((idx+1, indices[idx]), axis=1, level=[2, 3], drop_level=False).droplevel('try', axis=1)
+                #newdf.loc[:, newdf.columns.get_level_values('layer') == 'last'] = quant.xs(('last', idx_last), axis=1, level=[2, 3], drop_level=False).droplevel('try', axis=1)
                 newdf.loc[:, newdf.columns.get_level_values('stat') == 'err'] *= 100
 
-                if not quant.loc[epoch,  ('train', 'err', 'hidden', idx_hidden)] == quant.loc[epoch, ('train', 'err', 'last', idx_last)] == 0:
-                    print('Not separated!')
+                if not quant.loc[epoch,  ('train', 'err', 1, indices[0] )] == 0:
+                    print('Not separated!', dirname)
+                else:
+                    print('Separated!', dirname)
 
                 if 'lin' in basename:
                     #eval_lin(stats, output_path)

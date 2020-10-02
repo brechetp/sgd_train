@@ -248,11 +248,12 @@ class ClassifierFCN(nn.Module):
 
         self.indices = indices[:depth_max]
         self.size_out = size_out[:depth_max]
+        self.n_tries = num_tries
 
         self.model = model
 
         L = self.n_layers = len(self.indices)  # the total number of layers to plug into
-        n_classes = model.main[-1].out_features
+        n_classes = self.n_classes = model.main[-1].out_features
 
         if isinstance(Rs, int):
             Rs = L*[Rs]
@@ -275,24 +276,30 @@ class ClassifierFCN(nn.Module):
 
             #sizes =
 
-    def forward(self, x):
-        '''Forward of the different layers'''
+    def forward(self, x, stop=None):
+        '''Forward of the different layers
+        stop: the index of the layer at which to stop the computation (between 0 and L-1)'''
+        # stop
 
         # go through the different layers inside main
 
-        feats=[x.view(x.size(0), -1)]
+        feat=x.view(x.size(0), -1)
         idx_prev=0
+        #out is of size LxTxBxC
+        out = x.new_zeros((self.n_layers, self.n_tries, x.size(0), self.n_classes))  # new tensor with same device and dtype
+
         with torch.no_grad():
-            for idx in self.indices:
+            for i, idx in enumerate(self.indices[:stop+1]):
                 # for all the linear layers (marked by their indices in
                 # self.indices)
-                feats.append(self.model.main[idx_prev:idx](feats[-1]))
+                feat = self.model.main[idx_prev:idx](feat)  # the new input
+                out[i, :, :, :] = self.networks[i](feat.clone())  # output of the tunel
                 idx_prev = idx
 
-        out = [ net(feat.clone()).unsqueeze(0) for (net, feat) in zip(self.networks, feats[1:])]  # all feats except for the first one = x
+        #out = [ net(feat.clone()).unsqueeze(0) for (net, feat) in zip(self.networks[:len(feats)-1], feats[1:len(feats)-1])]  # all feats except for the first one = x
         # in the forward order
 
-        return torch.cat(out)
+        return out
 
 
 class LinearMasked(nn.Module):
@@ -365,7 +372,8 @@ class LinearMasked(nn.Module):
 
 
 
-def FCNHelper(num_layers, input_dim, num_classes, min_width, max_width=None, shape='linear', last_layer=None):
+def FCNHelper(num_layers, input_dim, num_classes, min_width, max_width=None,
+              shape='linear', first_layer=None, last_layer=None):
 
     if shape == 'linear':
         max_width = 2*min_width
@@ -375,6 +383,8 @@ def FCNHelper(num_layers, input_dim, num_classes, min_width, max_width=None, sha
 
     if last_layer is not None:
         widths[-1] = last_layer
+    if first_layer is not None:
+        widths[0] = first_layer
 
     return FCN(input_dim, num_classes, widths)
 

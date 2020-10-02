@@ -72,8 +72,10 @@ if __name__ == '__main__':
 
     if args.checkpoint is not None:  # continuing previous computation
         try:
+            nepochs = args.nepochs
             checkpoint = torch.load(args.checkpoint, map_location=device)
             args.__dict__.update(checkpoint['args'].__dict__)
+            args.nepochs = nepochs
             cont = True  # continue the computation
         except RuntimeError:
             print('Could not load the model')
@@ -185,7 +187,7 @@ if __name__ == '__main__':
     #parameters = [ p for p in model.parameters() if not feature_extraction or p.requires_grad ]
     parameters = [net.parameters() for net in classifier.networks]
     if len(args.learning_rate) <= 2:
-        lr_range = 2*[args.learning_rate] if len(args.learning_rate) == 1 else args.learning_rate
+        lr_range = 2*args.learning_rate if len(args.learning_rate) == 1 else args.learning_rate
         #lrs = np.linspace(lr_range[0], lr_range[1], classifier.n_layers)
         lrs = np.geomspace(lr_range[0], lr_range[1], classifier.n_layers)
     elif len(args.learning_rate) == classifier.n_layers:
@@ -216,6 +218,10 @@ if __name__ == '__main__':
     if 'lr_scheduler' in checkpoint.keys():
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
 
+    start_epoch = 0
+    if 'epochs' in checkpoint.keys():
+        start_epoch = checkpoint['epochs']
+
     sets = ['train', 'test']
     stats = ['loss', 'err']
     layers = np.arange(1, 1+classifier.n_layers)  # the different layers, forward order
@@ -223,7 +229,7 @@ if __name__ == '__main__':
 
     names=['set', 'stat', 'layer', 'try']
     columns=pd.MultiIndex.from_product([sets, stats, layers, tries], names=names)
-    index = pd.Index(np.arange(1, args.nepochs+1), name='epoch')
+    index = pd.Index(np.arange(1, start_epoch+args.nepochs+1), name='epoch')
     quant = pd.DataFrame(columns=columns, index=index, dtype=float)
 
     quant.sort_index(axis=1, inplace=True)  # sort for quicker access
@@ -297,15 +303,12 @@ if __name__ == '__main__':
 
 
     DO_SANITY_CHECK = False
-    start_epoch = 0
     stop = False
     separated = False
-    epoch = start_epoch - 1 if DO_SANITY_CHECK else start_epoch
+    epoch = (start_epoch - 1) if DO_SANITY_CHECK else start_epoch
     frozen = False
 
 
-    if 'epochs' in checkpoint.keys():
-        start_epoch = checkpoint['epochs']
 
     while not stop:
     #for epoch in tqdm(range(start_epoch, start_epoch+args.nepochs)):
@@ -332,7 +335,7 @@ if __name__ == '__main__':
                 err += zero_one_loss(out,y).mean().detach().cpu().numpy()  # just check if the number of error is 0
             else:
                 optimizer.zero_grad()
-                out_class = classifier(x)  # LxTxBxC, LxBxC  # each output for each layer
+                out_class = classifier(x, stop)  # LxTxBxC, LxBxC  # each output for each layer
                 loss = ce_loss(out_class, y)  # LxTxB
                 #loss_hidden = ce_loss(out_hidden, y)
                 err = zero_one_loss(out_class, y)  # LxT
@@ -353,6 +356,9 @@ if __name__ == '__main__':
         epoch += 1 if not frozen else 0
 
         err_min = err_train.min(axis=1).max(axis=0)
+        stop = err_train.max(axis=1).nonzero()[0].max()  # requires _all_ the tries to be 0 to stop the computation
+        ones = 1. - (err_train == 0)  # mask for the individual losses
+
 
         separated = frozen and err_min == 0
         frozen = err_min == 0 and not frozen # will test with frozen network next time, prevent from freezing twice in a row
@@ -393,7 +399,7 @@ if __name__ == '__main__':
         #print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
         print('ep {}, train loss (min/max): {:g} / {:g}, err (min/max): {:g}/{:g}'.format(
             epoch, quant.loc[epoch, ('train', 'loss')].min(), quant.loc[epoch, ('train', 'loss')].max(),
-            quant.loc[epoch, ('train', 'err')].min(), quant.loc[epoch, ('train', 'err')].max()),
+            err_min, quant.loc[epoch, ('train', 'err')].max()),
             file=logs, flush=True)
 
 
@@ -429,6 +435,7 @@ if __name__ == '__main__':
             save_checkpoint()
 
         if stop:
+            save_checkpoint()
             if separated:
                 print("Data is separated.", file=logs)
                 sys.exit(0)  # success

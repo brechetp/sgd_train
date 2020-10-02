@@ -48,10 +48,11 @@ if __name__ == '__main__':
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
     net_size = parser.add_mutually_exclusive_group()
     net_size.add_argument('--coefficient', '-c', type=float, default=1, help='The coefficient for the minimum width layer')
-    net_size.add_argument('--width', '-w', type=int, help='The width of the (last) layer')
+    net_size.add_argument('--width', '-w', type=int, help='The width of the layers')
     #net_size.add_argument('--num_parameters', type=int, help='the total number of parameters')
     #parser.set_defaults(
     parser.add_argument('--last_layer', type=int, default=None, help='the number of neurons for the last layer')
+    parser.add_argument('--first_layer', type=int, default=None, help='the width of the first layer')
     parser.add_argument('--net_shape', '-nt', default='square', choices=['square', 'linear'], help='how the network is constructed')
     parser.add_argument('--shuffle', default=0, type=float, help='shuffle a ratio of the target samples')
     #net_size = parser.add_mutually_exclusive_group(required=True)
@@ -197,7 +198,14 @@ if __name__ == '__main__':
     else:
         raise NotImplementedError('args.net_shape={}'.format(args.net_shape))
 
-    model = models.classifiers.FCNHelper(num_layers=args.depth, input_dim=input_dim, num_classes=num_classes, min_width=min_width, max_width=max_width, shape=args.net_shape, last_layer=args.last_layer)
+    model = models.classifiers.FCNHelper(num_layers=args.depth,
+                                         input_dim=input_dim,
+                                         num_classes=num_classes,
+                                         min_width=min_width,
+                                         max_width=max_width,
+                                         shape=args.net_shape,
+                                         first_layer=args.first_layer,
+                                         last_layer=args.last_layer)
 
     num_parameters = utils.num_parameters(model)
     num_samples_train = size_train
