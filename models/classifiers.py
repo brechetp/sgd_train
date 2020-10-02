@@ -278,28 +278,29 @@ class ClassifierFCN(nn.Module):
 
     def forward(self, x, stop=None):
         '''Forward of the different layers
-        stop: the index of the layer at which to stop the computation (between 0 and L-1)'''
+        stop: the index of the layer at which to stop the computation (between 1 and L)'''
         # stop
 
         # go through the different layers inside main
 
-        feat=x.view(x.size(0), -1)
+        feats=[x.view(x.size(0), -1)]
         idx_prev=0
         #out is of size LxTxBxC
-        out = x.new_zeros((self.n_layers, self.n_tries, x.size(0), self.n_classes))  # new tensor with same device and dtype
-
+        #out = x.new_ones((stop, self.n_tries, x.size(0), self.n_classes))  # new tensor with same device and dtype
         with torch.no_grad():
-            for i, idx in enumerate(self.indices[:stop+1]):
+            for i, idx in enumerate(self.indices[:stop]):
                 # for all the linear layers (marked by their indices in
                 # self.indices)
-                feat = self.model.main[idx_prev:idx](feat)  # the new input
-                out[i, :, :, :] = self.networks[i](feat.clone())  # output of the tunel
+                #feats. = self.model.main[idx_prev:idx](feat)  # the new input
+                feats.append(self.model.main[idx_prev:idx](feats[-1]))  # the new input
+                #out[i, :, :, :] = self.networks[i](feat.clone())  # output of the tunel
                 idx_prev = idx
 
-        #out = [ net(feat.clone()).unsqueeze(0) for (net, feat) in zip(self.networks[:len(feats)-1], feats[1:len(feats)-1])]  # all feats except for the first one = x
+        out = [ net(feat.clone()).unsqueeze(0) for (net, feat) in zip(self.networks[:len(feats)-1], feats[1:len(feats)])]  # all feats except for the first one = x
         # in the forward order
 
-        return out
+        #return out
+        return torch.cat(out)
 
 
 class LinearMasked(nn.Module):

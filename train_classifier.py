@@ -307,6 +307,8 @@ if __name__ == '__main__':
     separated = False
     epoch = (start_epoch - 1) if DO_SANITY_CHECK else start_epoch
     frozen = False
+    end = num_layers-1
+    ones = torch.ones((end, args.ntry), device=device, dtype=dtype)
 
 
 
@@ -318,10 +320,9 @@ if __name__ == '__main__':
             err = 0
         else:
             classifier.train()
-            loss_train = np.zeros((num_layers, args.ntry))  # for the
             #loss_hidden_tot = np.zeros(classifier.L)  # for the
-            ones = torch.ones((num_layers, args.ntry), device=device, dtype=dtype)
-            err_train = np.zeros((num_layers, args.ntry))
+            loss_train = np.zeros((end, args.ntry))  # for the
+            err_train = np.zeros((end, args.ntry))
             #ones_hidden = torch.ones(classifier.L, device=device, dtype=dtype)
 
         for idx, (x, y) in enumerate(train_loader):
@@ -335,7 +336,7 @@ if __name__ == '__main__':
                 err += zero_one_loss(out,y).mean().detach().cpu().numpy()  # just check if the number of error is 0
             else:
                 optimizer.zero_grad()
-                out_class = classifier(x, stop)  # LxTxBxC, LxBxC  # each output for each layer
+                out_class = classifier(x, end)  # LxTxBxC, LxBxC  # each output for each layer
                 loss = ce_loss(out_class, y)  # LxTxB
                 #loss_hidden = ce_loss(out_hidden, y)
                 err = zero_one_loss(out_class, y)  # LxT
@@ -343,7 +344,7 @@ if __name__ == '__main__':
                 loss_train = (idx * loss_train + loss.mean(dim=2).detach().cpu().numpy()) / (idx+1)
             # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
                 if not frozen:  # if we have to update the weights
-                    loss.mean(dim=2).backward(ones)
+                    loss[:end,:,:].mean(dim=2).backward(ones[:end, :])
                 # loss_hidden.mean(dim=1).backward(ones_hidden)
                     optimizer.step()
 
@@ -356,8 +357,7 @@ if __name__ == '__main__':
         epoch += 1 if not frozen else 0
 
         err_min = err_train.min(axis=1).max(axis=0)
-        stop = err_train.max(axis=1).nonzero()[0].max()  # requires _all_ the tries to be 0 to stop the computation
-        ones = 1. - (err_train == 0)  # mask for the individual losses
+        ones = torch.tensor(1. - (err_train == 0), device=device, dtype=dtype)  # mask for the individual losses
 
 
         separated = frozen and err_min == 0
@@ -371,8 +371,8 @@ if __name__ == '__main__':
                 )
 
 
-        quant.loc[pd.IndexSlice[epoch, ('train', 'err')]] =  err_train.reshape(-1)
-        quant.loc[pd.IndexSlice[epoch, ('train', 'loss')]] =  loss_train.reshape(-1)
+        quant.loc[pd.IndexSlice[epoch, ('train', 'err', range(1, end+1))]] =  err_train.reshape(-1)
+        quant.loc[pd.IndexSlice[epoch, ('train', 'loss', range(1, end+1))]] =  loss_train.reshape(-1)
 
         err_tot_test = np.zeros(args.ntry)
         err_test = np.zeros((num_layers, args.ntry))
@@ -395,6 +395,8 @@ if __name__ == '__main__':
         quant.loc[pd.IndexSlice[epoch, ('test', 'loss')]] =  loss_test.reshape(-1)
 
 
+        end = err_train.max(axis=1).nonzero()[0].max() + 1  # requires _all_ the tries to be 0 to stop the computation, 1 indexed
+        end = end
 
         #print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
         print('ep {}, train loss (min/max): {:g} / {:g}, err (min/max): {:g}/{:g}'.format(
