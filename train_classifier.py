@@ -41,9 +41,10 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', '-dat', default='mnist', type=str, help='dataset')
     parser.add_argument('--dataroot', '-droot', default='./data/', help='the root for the input data')
     parser.add_argument('--name', default='linear', type=str, help='the name of the experiment')
-    parser.add_argument('--learning_rate', '-lr', nargs='*', type=float, default=[1e-2], help='leraning rate')
+    parser.add_argument('--vary_name', nargs='*', default=None, help='the name of the parameter to vary in the name (appended)')
+    parser.add_argument('--learning_rate', '-lr', nargs='*', type=float, default=[1e-3], help='leraning rate')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
-    parser.add_argument('--nepochs', type=int, default=100, help='the number of epochs to train for')
+    parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
@@ -57,6 +58,7 @@ if __name__ == '__main__':
     parser_device.add_argument('--cpu', action='store_true', dest='cpu', help='force the cpu model')
     parser_device.add_argument('--cuda', action='store_false', dest='cpu')
     parser.add_argument('--depth_max', type=int, help='the maximum depth to which operate')
+    parser.add_argument('--end_layer', type=int, help='if set the maximum layer for which to compute the separation (forward indexing)')
     parser.set_defaults(cpu=False)
 
 
@@ -104,6 +106,21 @@ if __name__ == '__main__':
 
 
     args_model = checkpoint_model['args']  # restore the previous arguments
+
+    if args.vary_name is not None:
+        name = ''
+        for field in args.vary_name:
+            if field in args:
+                arg = args.__dict__[field]
+                if isinstance(arg, bool):
+                    dirname = f'{field}' if arg else f'no-{field}'
+                else:
+                    val = str(arg)
+                    key = ''.join(c[0] for c in field.split('_'))
+                    dirname = f'{key}-{val}'
+                name = os.path.join(name, dirname)
+        args.name = name if name else args.name
+
     path_output = os.path.join(args_model.output_root, args_model.name, args.name)
     # Logs
     log_fname = os.path.join(args_model.output_root, args_model.name, 'logs.txt')
@@ -210,7 +227,9 @@ if __name__ == '__main__':
 
     print('Optimizer: {}'.format(optimizer), file=logs, flush=True)
     #lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.9)
+    # divdes by 10 after the first epoch
+    #lr_lambdas = [lambda epoch: (epoch == 1) * 1  + (epoch > 1)*1 for _ in param_list]
+    lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99, lr_min=1e-3)
 
     if 'optimizer' in checkpoint.keys():
         optimizer.load_state_dict(checkpoint['optimizer'])
@@ -269,13 +288,15 @@ if __name__ == '__main__':
 
 
         L, T, B, C = input.size()
-        cond = input.gather(3,target.view(1, 1, -1, 1).expand(L, T, -1, -1)).squeeze()
+        cond = input.gather(3,target.view(1, 1, -1, 1).expand(L, T, -1, -1)).squeeze(3)
         output = - cond + input.logsumexp(dim=3)
         return output
 
     def get_checkpoint():
         '''Get current checkpoint'''
-        global model, stats, quant, args, optimizer, lr_scheduler, epoch
+        global model, stats, quant, args, optimizer, lr_scheduler, epoch, params_discarded, end
+
+        optimizer.param_groups = optimizer.param_groups + params_discarded
 
         checkpoint = {
                 'classifier': classifier.state_dict(),
@@ -285,6 +306,8 @@ if __name__ == '__main__':
                 'optimizer': optimizer.state_dict(),
                 'epochs': epoch,
                     }
+
+        optimizer.param_groups = optimizer.param_groups[:end]
 
         return checkpoint
 
@@ -307,8 +330,11 @@ if __name__ == '__main__':
     separated = False
     epoch = (start_epoch - 1) if DO_SANITY_CHECK else start_epoch
     frozen = False
-    end = num_layers-1
+    end = num_layers
+    if args.end_layer is not None:
+        end = min(end, args.end_layer)
     ones = torch.ones((end, args.ntry), device=device, dtype=dtype)
+    params_discarded = []  # for the discarded parameters
 
 
 
@@ -330,7 +356,7 @@ if __name__ == '__main__':
 
             x = x.to(device)
             y = y.to(device)
-            if epoch == start_epoch -1:
+            if epoch == start_epoch -1:  # sanity check
                 out = model(x).unsqueeze(0).unsqueeze(0) # 1x1xBxC
                 #loss = ce_loss(out, y).mean()  # TxB
                 err += zero_one_loss(out,y).mean().detach().cpu().numpy()  # just check if the number of error is 0
@@ -344,9 +370,10 @@ if __name__ == '__main__':
                 loss_train = (idx * loss_train + loss.mean(dim=2).detach().cpu().numpy()) / (idx+1)
             # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
                 if not frozen:  # if we have to update the weights
-                    loss[:end,:,:].mean(dim=2).backward(ones[:end, :])
+                    loss.mean(dim=2).backward(ones)
                 # loss_hidden.mean(dim=1).backward(ones_hidden)
                     optimizer.step()
+                    #lr_scheduler.step()
 
         if epoch == start_epoch - 1:  # check if we have null training error (sanity check)
             print('Error: ', err, file=logs, flush=True)
@@ -356,7 +383,7 @@ if __name__ == '__main__':
 
         epoch += 1 if not frozen else 0
 
-        err_min = err_train.min(axis=1).max(axis=0)
+        err_min = err_train.min(axis=1).max(axis=0)  # min over tries, max over layers (all layers have to have at least one try at 0)
         ones = torch.tensor(1. - (err_train == 0), device=device, dtype=dtype)  # mask for the individual losses
 
 
@@ -396,17 +423,26 @@ if __name__ == '__main__':
 
 
         end = err_train.max(axis=1).nonzero()[0].max() + 1  # requires _all_ the tries to be 0 to stop the computation, 1 indexed
-        end = end
+        if args.end_layer is not None:
+            end = min(end, args.end_layer)
+
+        ones = ones[:end, :]
+        optimizer.param_groups,new_params_disc  = optimizer.param_groups[:end], optimizer.param_groups[end:]  # trim the parameters accordingly
+
+        params_discarded = new_params_disc+params_discarded
+
+
 
         #print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
-        print('ep {}, train loss (min/max): {:g} / {:g}, err (min/max): {:g}/{:g}'.format(
+        print('ep {}, train loss (min/max): {:g} / {:g}, err (min/max): {:g}/{:g}, end: {}{}'.format(
             epoch, quant.loc[epoch, ('train', 'loss')].min(), quant.loc[epoch, ('train', 'loss')].max(),
-            err_min, quant.loc[epoch, ('train', 'err')].max()),
+            err_min, quant.loc[epoch, ('train', 'err')].max(), end, ' (frozen)' if frozen else ''),
             file=logs, flush=True)
 
-
+        end_layer = args.end_layer if args.end_layer is not None else num_layers
+        quant_limit = quant.loc[pd.IndexSlice[:, quant.columns.get_level_values('layer').isin(range(1, end_layer+1))]]
         #fig, ax = plt.sub
-        quant_reset = quant.reset_index()
+        quant_reset = quant_limit.reset_index()
         quant_plot = pd.melt(quant_reset, id_vars='epoch')
         g = sns.relplot(
             data = quant_plot,
@@ -425,7 +461,7 @@ if __name__ == '__main__':
 
         g.set(yscale='log')
         #g.set(title='ds = {}, width = {}, removed = {}, Tries = {}'.format(args_model.dataset, args_model.width, args.remove, args.ntry))
-        g.fig.subplots_adjust(top=0.9, left=0.06)
+        g.fig.subplots_adjust(top=0.9, left=1/g.axes.shape[1] * 0.1 )  # number of columns in the sublplot
         g.fig.suptitle('ds = {}, width = {}, removed = {}, Tries = {}, name = {}'.format(args_model.dataset, args_model.width, args.remove, args.ntry, args.name))
         #g.set_axis_labels
 

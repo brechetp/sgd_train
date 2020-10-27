@@ -182,19 +182,21 @@ class ClassifierVGG(nn.Module):
 
         return linear_branch, shallow_branch
 
-def init_kaiming(weight, bias, fan_in=None):
+def init_kaiming(weight, bias, fan_in:int=None):
     '''Kaiming (uniform) initialization with for parameters with parallel channels'''
 
-    a = math.sqrt(5.0)  # initialization of a linear model in pytorch
+    #a = math.sqrt(5.0)  # initialization of a linear model in pytorch
 
+    # weight is of size TxOxI
     if fan_in is None:
         fan_in = weight.size(1)  # the neurons that are kept (fan_in)
-    gain = nn.init.calculate_gain('relu', a)  # kaiming uniform init
+    gain = nn.init.calculate_gain('relu')  # kaiming uniform init
     std = gain / (math.sqrt(fan_in))
     bound = math.sqrt(3.0) * std
-    nn.init.uniform_(weight, -bound, bound)
-    bound = 1. / math.sqrt(fan_in)
-    nn.init.uniform_(bias, -bound, bound)
+    with torch.no_grad():
+        nn.init.uniform_(weight, -bound, bound)
+        #bound = 1. / math.sqrt(fan_in)
+        nn.init.uniform_(bias, -bound, bound)
 
 
 class MultiLinear(nn.Module):
@@ -220,6 +222,7 @@ class MultiLinear(nn.Module):
     def forward(self, x):
         ''' Parallel matrix multiplication '''
         # size of x: TxBxN
+        # weight of size: TxNxD
 
         out_matmul = x.matmul(self.weight) + self.bias
         # output of size TxBxD
@@ -240,7 +243,7 @@ class ClassifierFCN(nn.Module):
         super().__init__()
         # the indices of the features (i.e. after the activations
         # and the size of the output network
-        indices  =[ idx for idx, layer in enumerate(model.main) if isinstance(layer, nn.ReLU)]
+        indices  =[ idx+1 for idx, layer in enumerate(model.main) if isinstance(layer, nn.ReLU)]
         size_out = [layer.out_features for layer in model.main[:-1] if isinstance(layer, nn.Linear)]
 
         if depth_max is None:
@@ -296,7 +299,11 @@ class ClassifierFCN(nn.Module):
                 #out[i, :, :, :] = self.networks[i](feat.clone())  # output of the tunel
                 idx_prev = idx
 
-        out = [ net(feat.clone()).unsqueeze(0) for (net, feat) in zip(self.networks[:len(feats)-1], feats[1:len(feats)])]  # all feats except for the first one = x
+        out = []
+        for i in range(len(feats)-1):
+
+            out.append(self.networks[i](feats[1+i].clone()).unsqueeze(0))
+
         # in the forward order
 
         #return out

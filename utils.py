@@ -217,7 +217,7 @@ def construct_mmlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, ar
     (N, R) = sizes[0]  # total vs removed number of neurons for the mask
     layers = []
     norm_layer = nn.BatchNorm1d
-    if fct_act is nn.ReLU and args_act == {}:
+    if fct_act is nn.ReLU and args_act == []:
         args_act = [ True ]  # inplace
     MultiLinear = models.classifiers.MultiLinear
     LinearMasked = models.classifiers.LinearMasked

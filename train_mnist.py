@@ -41,7 +41,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_step', '-lrs', type=int, help='if any, the step for the learning rate scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
-    parser.add_argument('--depth', '-d', type=int, default=3, help='the number of layers for the network')
+    parser.add_argument('--depth', '-L', type=int, default=3, help='the number of layers for the network')
 
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
@@ -130,7 +130,10 @@ if __name__ == '__main__':
                     dirname = f'{field}' if arg else f'no-{field}'
                 else:
                     val = str(arg)
-                    key = ''.join(c[0] for c in field.split('_'))
+                    if field == 'depth':
+                        key = 'L'
+                    else:
+                        key = ''.join(c[0] for c in field.split('_'))
                     dirname = f'{key}-{val}'
                 name = os.path.join(name, dirname)
         args.name = name if name else args.name

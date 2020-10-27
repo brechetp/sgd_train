@@ -83,7 +83,7 @@ def eval_model(stats, output_path):
 
     plt.close('all')
 
-def eval_lin_df(df, output_path):
+def eval_lin_df(df, output_path, args=None, args_model=None):
     '''process the dataframe from a linear separation result'''
 
 
@@ -104,9 +104,14 @@ def eval_lin_df(df, output_path):
             'sharex': True
         }
     )
+    if args is not None and args_model is not None:
+        g.fig.suptitle('ds = {}, width = {}, removed = {}, Tries = {}, name = {}'.format(args_model.dataset, args_model.width, args.remove, args.ntry, args.name))
+
+    g.fig.subplots_adjust(top=0.9, left=1/g.axes.shape[1] * 0.1)
     g.set(yscale='linear')
     plt.savefig(fname=os.path.join(output_path, 'losses_lin.pdf'))
     g.set(yscale='log')
+    g.fig.subplots_adjust(top=0.9, left=1/g.axes.shape[1] * 0.2)
     plt.savefig(fname=os.path.join(output_path, 'losses_log.pdf'))
 
 
@@ -226,22 +231,28 @@ def main(argv):
                     continue
                 os.makedirs(output_path, exist_ok=True)
 
-                n_layers = len(quant.columns.levels[2])  # the layers
+                n_layers = len(quant.columns.levels[2]) if args.__dict__.get('end_layer', None) is None else args.end_layer  # the layers
                 #columns = quant.columns.name
                 indices = np.zeros(n_layers, dtype=int)
 
 
                 for idx in range(n_layers):
-                    indices[idx] = quant.loc[epoch, ('train', 'err', idx+1)].argmin() +1  # the try are 1 indexed
+                    # replace NaN with 0
+                    indices[idx] = quant.loc[epoch, ('train', 'err', idx+1)].replace(np.NaN, 0).argmin() +1  # the try are 1 indexed
+                    # the indices for the try that has the minimum training
+                    # error at the epoch epoch
 
                 # remove the column index 'try'
-                cols = pd.MultiIndex.from_product(quant.columns.levels[:-1], names=quant.columns.names[:-1])
+                cols = pd.MultiIndex.from_product(quant.columns.levels[:-1], names=quant.columns.names[:-1])  # all but the try
                 newdf = pd.DataFrame(columns=cols, index=quant.index)
 
                 for idx in range(n_layers):
+                    # select the try that has the minimum training error at the
+                    # last epoch (at index indices[idx])
                     newdf.loc[:, newdf.columns.get_level_values('layer') ==idx+1] = quant.xs((idx+1, indices[idx]), axis=1, level=[2, 3], drop_level=False).droplevel('try', axis=1)
                 #newdf.loc[:, newdf.columns.get_level_values('layer') == 'last'] = quant.xs(('last', idx_last), axis=1, level=[2, 3], drop_level=False).droplevel('try', axis=1)
                 newdf.loc[:, newdf.columns.get_level_values('stat') == 'err'] *= 100
+                newdf = newdf.loc[pd.IndexSlice[:, newdf.columns.get_level_values('layer').isin(range(1, n_layers+1))]]
 
                 if not quant.loc[epoch,  ('train', 'err', 1, indices[0] )] == 0:
                     print('Not separated!', dirname)
@@ -250,7 +261,8 @@ def main(argv):
 
                 if 'lin' in basename:
                     #eval_lin(stats, output_path)
-                    eval_lin_df(newdf, output_path)
+                    args_model = torch.load(args.model, map_location=device)['args']
+                    eval_lin_df(newdf, output_path, args, args_model)
                 else:
                     #eval_model(stats, output_path)
                     eval_model_df(quant, output_path)
