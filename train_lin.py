@@ -154,7 +154,6 @@ if __name__ == '__main__':
     except RuntimeError as e:
         print("Can't load mode (error {})".format(e))
 
-    #linear_classifier = models.classifiers.Linear(model, args.ntry, args.keep_ratio).to(device)
     linear_classifier = models.classifiers.Linear(model, args.ntry, args.keep_ratio).to(device)
 
 

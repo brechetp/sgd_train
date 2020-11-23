@@ -42,7 +42,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataroot', '-droot', default='./data/', help='the root for the input data')
     parser.add_argument('--name', default='linear', type=str, help='the name of the experiment')
     parser.add_argument('--vary_name', nargs='*', default=None, help='the name of the parameter to vary in the name (appended)')
-    parser.add_argument('--learning_rate', '-lr', nargs='*', type=float, default=[1e-3], help='leraning rate')
+    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-3, help='leraning rate')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
@@ -58,7 +58,7 @@ if __name__ == '__main__':
     parser_device.add_argument('--cpu', action='store_true', dest='cpu', help='force the cpu model')
     parser_device.add_argument('--cuda', action='store_false', dest='cpu')
     parser.add_argument('--depth_max', type=int, help='the maximum depth to which operate')
-    parser.add_argument('--end_layer', type=int, help='if set the maximum layer for which to compute the separation (forward indexing)')
+    #parser.add_argument('--end_layer', type=int, help='if set the maximum layer for which to compute the separation (forward indexing)')
     parser.set_defaults(cpu=False)
 
 
@@ -183,14 +183,14 @@ if __name__ == '__main__':
         classifier.load_state_dict(checkpoint['classifier'])
 
     num_parameters = utils.num_parameters(classifier)
-    num_layers = classifier.n_layers
+    num_layers = 1
     num_samples_train = size_train
     num_samples_val = size_val
     num_samples_test = size_test
     print('Number of parameters: {}'.format(num_parameters), file=logs)
     print('Number of training samples: {}'.format(num_samples_train), file=logs)
     print('Number of testing samples: {}'.format(size_test), file=logs)
-    print('Layer dimensions'.format(classifier.size_out), file=logs)
+    #print('Layer dimensions'.format(classifier.size_out), file=logs)
     print('Image dimension: {}'.format(imsize), file=logs)
 
     #summary(model,  [imsize, (1,)])
@@ -203,17 +203,17 @@ if __name__ == '__main__':
 
     print('Linear classifier: {}'.format(str(classifier)), file=logs)
     #parameters = [ p for p in model.parameters() if not feature_extraction or p.requires_grad ]
-    parameters = [net.parameters() for net in classifier.networks]
-    if len(args.learning_rate) <= 2:
-        lr_range = 2*args.learning_rate if len(args.learning_rate) == 1 else args.learning_rate
+    parameters = classifier.network.parameters()
+    #if len(args.learning_rate) <= 2:
+    #    lr_range = 2*args.learning_rate if len(args.learning_rate) == 1 else args.learning_rate
         #lrs = np.linspace(lr_range[0], lr_range[1], classifier.n_layers)
-        lrs = np.geomspace(lr_range[0], lr_range[1], classifier.n_layers)
-    elif len(args.learning_rate) == classifier.n_layers:
-        lrs  = args.learning_rate
-    else:
-        raise ValueError('Parameter learning_rate not understood (n_layers ={}, #lr = {})'.format(classifier.n_layers, len(args.learning_rate)))
+   #     lrs = np.geomspace(lr_range[0], lr_range[1], classifier.n_layers)
+    #elif len(args.learning_rate) == classifier.n_layers:
+    #    lrs  = args.learning_rate
+   # else:
+   #     raise ValueError('Parameter learning_rate not understood (n_layers ={}, #lr = {})'.format(classifier.n_layers, len(args.learning_rate)))
 
-    param_list = [{'params': param, 'lr': lr} for param, lr in zip(parameters, lrs)]
+   # param_list = [{'params': param, 'lr': lr} for param, lr in zip(parameters, lrs)]
 
 
     #optimizer = torch.optim.AdamW(
@@ -221,7 +221,9 @@ if __name__ == '__main__':
     #        )
     #optimizer = torch.optim.RMSprop(parameters, lr=args.learning_rate)
 
-    optimizer = torch.optim.SGD(param_list, momentum=0.95
+
+    #optimizer = torch.optim.SGD(param_list, momentum=0.95
+    optimizer = torch.optim.SGD(parameters, momentum=0.95, lr=args.learning_rate,
         #parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
         #parameters, lr=args.learning_rate, momentum=0.95
     )
@@ -230,7 +232,7 @@ if __name__ == '__main__':
     #lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
     # divdes by 10 after the first epoch
     #lr_lambdas = [lambda epoch: (epoch == 1) * 1  + (epoch > 1)*1 for _ in param_list]
-    lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99, lr_min=1e-3)
+    #lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99, lr_min=1e-3)
 
     if 'optimizer' in checkpoint.keys():
         optimizer.load_state_dict(checkpoint['optimizer'])
@@ -244,7 +246,7 @@ if __name__ == '__main__':
 
     sets = ['train', 'test']
     stats = ['loss', 'err']
-    layers = np.arange(1, 1+classifier.n_layers)  # the different layers, forward order
+    layers = np.arange(1, 1+1)#classifier.n_layers)  # the different layers, forward order
     tries = np.arange(1, 1+args.ntry)  # the different tries
 
     names=['set', 'stat', 'layer', 'try']
@@ -268,12 +270,12 @@ if __name__ == '__main__':
     classes = torch.arange(num_classes).view(1, -1).to(device)  # the different possible classes
 
     def zero_one_loss(x, targets):
-        ''' x: LxTxBxC
+        ''' x: TxBxC
         targets: Bx1
 
-        returns: err of size LxT
+        returns: err of size T
         '''
-        return  (x.argmax(dim=3)!=y).float().mean(dim=2)
+        return  (x.argmax(dim=2)!=y).float().mean(dim=1)
 
     #mse_loss = nn.MSELoss()
     #ce_loss_check = nn.CrossEntropyLoss(reduction='none')
@@ -281,23 +283,23 @@ if __name__ == '__main__':
     def ce_loss(input, target):
         '''Batch cross entropy loss
 
-        input: LxTxBxC output of the linear model
+        input: TxBxC output of the linear model
         target: Bx1: the target classes
 
-        output: LxTxB the loss for each try
+        output: TxB the loss for each try
         '''
 
 
-        L, T, B, C = input.size()
-        cond = input.gather(3,target.view(1, 1, -1, 1).expand(L, T, -1, -1)).squeeze(3)
-        output = - cond + input.logsumexp(dim=3)
+        T, B, C = input.size()
+        cond = input.gather(2,target.view(1, -1, 1).expand(T, -1, -1)).squeeze(2)  # TxBx1
+        output = - cond + input.logsumexp(dim=-1)
         return output
 
     def get_checkpoint():
         '''Get current checkpoint'''
-        global model, stats, quant, args, optimizer, lr_scheduler, epoch, params_discarded, end
+        global model, stats, quant, args, optimizer, lr_scheduler, epoch#, params_discarded, end
 
-        optimizer.param_groups = optimizer.param_groups + params_discarded
+        #optimizer.param_groups = optimizer.param_groups + params_discarded
 
         checkpoint = {
                 'classifier': classifier.state_dict(),
@@ -308,7 +310,7 @@ if __name__ == '__main__':
                 'epochs': epoch,
                     }
 
-        optimizer.param_groups = optimizer.param_groups[:end]
+        #optimizer.param_groups = optimizer.param_groups[:end]
 
         return checkpoint
 
@@ -331,10 +333,7 @@ if __name__ == '__main__':
     separated = False
     epoch = (start_epoch - 1) if DO_SANITY_CHECK else start_epoch
     frozen = False
-    end = num_layers
-    if args.end_layer is not None:
-        end = min(end, args.end_layer)
-    ones = torch.ones((end, args.ntry), device=device, dtype=dtype)
+    ones = torch.ones(args.ntry, device=device, dtype=dtype)
     params_discarded = []  # for the discarded parameters
 
 
@@ -348,8 +347,8 @@ if __name__ == '__main__':
         else:
             classifier.train()
             #loss_hidden_tot = np.zeros(classifier.L)  # for the
-            loss_train = np.zeros((end, args.ntry))  # for the
-            err_train = np.zeros((end, args.ntry))
+            loss_train = np.zeros(args.ntry)  # for the
+            err_train = np.zeros(args.ntry)
             #ones_hidden = torch.ones(classifier.L, device=device, dtype=dtype)
 
         for idx, (x, y) in enumerate(train_loader):
@@ -363,15 +362,15 @@ if __name__ == '__main__':
                 err += zero_one_loss(out,y).mean().detach().cpu().numpy()  # just check if the number of error is 0
             else:
                 optimizer.zero_grad()
-                out_class = classifier(x, end)  # LxTxBxC, LxBxC  # each output for each layer
+                out_class = classifier(x)  # LxTxBxC, LxBxC  # each output for each layer
                 loss = ce_loss(out_class, y)  # LxTxB
                 #loss_hidden = ce_loss(out_hidden, y)
-                err = zero_one_loss(out_class, y)  # LxT
+                err = zero_one_loss(out_class, y)  # T
                 err_train = (idx * err_train + err.detach().cpu().numpy()) / (idx+1)
-                loss_train = (idx * loss_train + loss.mean(dim=2).detach().cpu().numpy()) / (idx+1)
+                loss_train = (idx * loss_train + loss.mean(dim=-1).detach().cpu().numpy()) / (idx+1)
             # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
                 if not frozen:  # if we have to update the weights
-                    loss.mean(dim=2).backward(ones)
+                    loss.mean(dim=-1).backward(ones)
                 # loss_hidden.mean(dim=1).backward(ones_hidden)
                     optimizer.step()
                     #lr_scheduler.step()
@@ -384,8 +383,8 @@ if __name__ == '__main__':
 
         epoch += 1 if not frozen else 0
 
-        err_min = err_train.min(axis=1).max(axis=0)  # min over tries, max over layers (all layers have to have at least one try at 0)
-        ones = torch.tensor(1. - (err_train == 0), device=device, dtype=dtype)  # mask for the individual losses
+        err_min = err_train.min(axis=0)#max(axis=0)  # min over tries, max over layers (all layers have to have at least one try at 0)
+        #ones = torch.tensor(1. - (err_train == 0), device=device, dtype=dtype)  # mask for the individual losses
 
 
         separated = frozen and err_min == 0
@@ -399,12 +398,12 @@ if __name__ == '__main__':
                 )
 
 
-        quant.loc[pd.IndexSlice[epoch, ('train', 'err', range(1, end+1))]] =  err_train.reshape(-1)
-        quant.loc[pd.IndexSlice[epoch, ('train', 'loss', range(1, end+1))]] =  loss_train.reshape(-1)
+        quant.loc[pd.IndexSlice[epoch, ('train', 'err', range(1, 2))]] =  err_train.reshape(-1)
+        quant.loc[pd.IndexSlice[epoch, ('train', 'loss', range(1, 2))]] =  loss_train.reshape(-1)
 
         err_tot_test = np.zeros(args.ntry)
-        err_test = np.zeros((num_layers, args.ntry))
-        loss_test = np.zeros((num_layers, args.ntry))
+        err_test = np.zeros(args.ntry)
+        loss_test = np.zeros(args.ntry)
 
         with torch.no_grad():
 
@@ -415,7 +414,7 @@ if __name__ == '__main__':
                 y = y.to(device)
                 out_test = classifier(x)  # TxBxC, LxBxC  # each output for each layer
                 loss = ce_loss(out_test, y)  # LxTxB
-                loss_test = (idx * loss_test + loss.mean(dim=2).detach().cpu().numpy())/(idx+1)
+                loss_test = (idx * loss_test + loss.mean(dim=-1).detach().cpu().numpy())/(idx+1)
                 err_test += zero_one_loss(out_test, y).detach().cpu().numpy()
 
 
@@ -423,27 +422,28 @@ if __name__ == '__main__':
         quant.loc[pd.IndexSlice[epoch, ('test', 'loss')]] =  loss_test.reshape(-1)
 
 
-        end = err_train.max(axis=1).nonzero()[0].max() + 1  # requires _all_ the tries to be 0 to stop the computation, 1 indexed
-        if args.end_layer is not None:
-            end = min(end, args.end_layer)
+        #end = err_train.max(axis=1).nonzero()[0].max() + 1  # requires _all_ the tries to be 0 to stop the computation, 1 indexed
+        #if args.end_layer is not None:
+        #    end = min(end, args.end_layer)
 
-        ones = ones[:end, :]
-        optimizer.param_groups,new_params_disc  = optimizer.param_groups[:end], optimizer.param_groups[end:]  # trim the parameters accordingly
+        #ones = ones[:end, :]
+        #optimizer.param_groups,new_params_disc  = optimizer.param_groups[:end], optimizer.param_groups[end:]  # trim the parameters accordingly
 
-        params_discarded = new_params_disc+params_discarded
+        #params_discarded = new_params_disc+params_discarded
 
 
 
         #print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
-        print('ep {}, train loss (min/max): {:g} / {:g}, err (min/max): {:g}/{:g}, end: {}{}'.format(
+        print('ep {}, train loss (min/max): {:g} / {:g}, err (min/max): {:g}/{:g} {}'.format(
             epoch, quant.loc[epoch, ('train', 'loss')].min(), quant.loc[epoch, ('train', 'loss')].max(),
-            err_min, quant.loc[epoch, ('train', 'err')].max(), end, ' (frozen)' if frozen else ''),
+            err_min, quant.loc[epoch, ('train', 'err')].max(), ' (frozen)' if frozen else ''),
             file=logs, flush=True)
 
-        end_layer = args.end_layer if args.end_layer is not None else num_layers
-        quant_limit = quant.loc[pd.IndexSlice[:, quant.columns.get_level_values('layer').isin(range(1, end_layer+1))]]
+        #end_layer = 1
+        #quant_limit = quant.loc[pd.IndexSlice[:, quant.columns.get_level_values('layer').isin(range(1, end_layer+1))]]
         #fig, ax = plt.sub
-        quant_reset = quant_limit.reset_index()
+        #quant_reset = quant_limit.reset_index()
+        quant_reset = quant.reset_index()
         quant_plot = pd.melt(quant_reset, id_vars='epoch')
         g = sns.relplot(
             data = quant_plot,

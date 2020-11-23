@@ -235,6 +235,11 @@ class MultiLinear(nn.Module):
         return "in_features={}, out_features={}, num_tries={}".format(self.in_features, self.out_features, self.num_tries)
 
 
+
+
+
+
+
 class ClassifierFCN(nn.Module):
     '''The classifiers plugged into a FCN network'''
 
@@ -307,8 +312,42 @@ class ClassifierFCN(nn.Module):
         # in the forward order
 
         #return out
+
         return torch.cat(out)
 
+
+class ClassifierFCNSimple(nn.Module):
+
+    def __init__(self, model:FCN, num_tries:int, R:int):
+
+        super().__init__()
+
+
+        self.model = model
+        L = len([x for x in model.main if isinstance(x, nn.Linear)])
+        N = model.main[0].out_features
+        n_classes = model.main[-1].out_features
+        depth = L-1
+        sizes = [(N, R)] + depth * [R] + [n_classes]
+        net = utils.construct_mmlp_net(sizes, fct_act=nn.ReLU, num_tries=num_tries)
+        self.network = net
+
+
+    def forward(self, x):
+
+        x=x.view(x.size(0), -1)
+        idx_prev=0
+        #out is of size LxTxBxC
+        #out = x.new_ones((stop, self.n_tries, x.size(0), self.n_classes))  # new tensor with same device and dtype
+        with torch.no_grad():
+            # for all the linear layers (marked by their indices in
+            # self.indices)
+            #feats. = self.model.main[idx_prev:idx](feat)  # the new input
+            feats = self.model.main[:2](x)  # the new input
+            #out[i, :, :, :] = self.networks[i](feat.clone())  # output of the tunel
+
+        out = self.network(feats)
+        return out
 
 class LinearMasked(nn.Module):
 
