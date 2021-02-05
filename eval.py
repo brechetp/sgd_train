@@ -97,7 +97,7 @@ def eval_model(stats, output_path):
     #        label='Test')
     ax.legend()
     ax.set_xlabel('Epoch')
-    ax.set_ylabel('loss (nats)')
+    ax.set_ylabel('loss')
     ax.set_title('Cross-entropy loss')
     ax.set_yscale('linear')
     plt.savefig(fname=os.path.join(output_path, 'cross_entropy_loss.pdf'))
@@ -145,7 +145,7 @@ def eval_lin(stats, output_path):
     #            label='Train')
     #ax.errorbar(stats['epochs'], stats_acc['loss_test']['zo'][:, :epoch].mean(axis=0),
     #            yerr=stats_acc['loss_test']['zo'][:, :epoch].std(axis=0),
-    ax.set_ylabel('loss (nats)')
+    ax.set_ylabel('loss')
     ax.set_xlabel('Epoch')
     ax.set_title('Cross-entropy loss')
     ax.set_yscale('log')
@@ -165,7 +165,7 @@ def eval_lin(stats, output_path):
         #        yerr=stats_acc['loss_test']['ce'][:, :epoch].std(axis=0),
         #        label='Test')
         ax.set_xlabel('Epoch')
-        ax.set_ylabel('loss (nats)')
+        ax.set_ylabel('loss')
         ax.set_title('Cross-entropy loss at intermediate layers')
         ax.set_yscale('linear')
         plt.savefig(fname=os.path.join(output_path, 'cross_entropy_loss_hidden_train.pdf'))

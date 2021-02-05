@@ -43,7 +43,12 @@ if __name__ == '__main__':
     parser.add_argument('--name', default='linear', type=str, help='the name of the experiment')
     parser.add_argument('--vary_name', nargs='*', default=None, help='the name of the parameter to vary in the name (appended)')
     parser.add_argument('--learning_rate', '-lr', nargs='*', type=float, default=[1e-3], help='leraning rate')
-    parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
+    parser.add_argument('--lr_update', '-lru', type=int, default=0, help='update the learning rate after given epoch')
+    #parser_update_lr = parser.add_mutually_exclusive_group(required=True)
+    #parser_update_lr.add_argument('--update_lr', help='if true automatically update the learning rate')
+    #parser_update_lr.add_argument('--no-update_lr', dest='update_lr', help='does not update the learning rate')
+    #parser.set_defaults(update_lr=False)
+    parser.add_argument('--save_model', type=int, default=5, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
@@ -175,8 +180,8 @@ if __name__ == '__main__':
         print("Can't load mode (error {})".format(e))
 
     #classifier = models.classifiers.Linear(model, args.ntry, args.keep_ratio).to(device)
-    #classifier = models.classifiers.ClassifierFCN(model, num_tries=args.ntry, Rs=args.remove, depth_max=args.depth_max).to(device)
-    classifier = models.classifiers.ClassifierFCNSimple(model, num_tries=args.ntry, R=args.remove).to(device)
+    classifier = models.classifiers.ClassifierFCN(model, num_tries=args.ntry, Rs=args.remove, depth_max=args.depth_max).to(device)
+    #classifier = models.classifiers.ClassifierFCNSimple(model, num_tries=args.ntry, R=args.remove).to(device)
 
 
     if 'classifier' in checkpoint.keys():
@@ -204,14 +209,85 @@ if __name__ == '__main__':
     print('Linear classifier: {}'.format(str(classifier)), file=logs)
     #parameters = [ p for p in model.parameters() if not feature_extraction or p.requires_grad ]
     parameters = [net.parameters() for net in classifier.networks]
-    if len(args.learning_rate) <= 2:
-        lr_range = 2*args.learning_rate if len(args.learning_rate) == 1 else args.learning_rate
-        #lrs = np.linspace(lr_range[0], lr_range[1], classifier.n_layers)
-        lrs = np.geomspace(lr_range[0], lr_range[1], classifier.n_layers)
-    elif len(args.learning_rate) == classifier.n_layers:
-        lrs  = args.learning_rate
-    else:
-        raise ValueError('Parameter learning_rate not understood (n_layers ={}, #lr = {})'.format(classifier.n_layers, len(args.learning_rate)))
+   # if len(args.learning_rate) <= 2:
+   #     lr_range = 2*args.learning_rate if len(args.learning_rate) == 1 else args.learning_rate
+   #     #lrs = np.linspace(lr_range[0], lr_range[1], classifier.n_layers)
+   #     lrs = np.geomspace(lr_range[0], lr_range[1], classifier.n_layers)
+   # elif len(args.learning_rate) == classifier.n_layers:
+   #     lrs  = args.learning_rate
+   # else:
+   #     raise ValueError('Parameter learning_rate not understood (n_layers ={}, #lr = {})'.format(classifier.n_layers, len(args.learning_rate)))
+
+    def ce_loss(input, target):
+        '''Batch cross entropy loss
+
+        input: LxTxBxC output of the linear model
+        target: Bx1: the target classes
+
+        output: LxTxB the loss for each try
+        '''
+
+
+        L, T, B, C = input.size()
+        cond = input.gather(3,target.view(1, 1, -1, 1).expand(L, T, -1, -1)).squeeze(3)
+        output = - cond + input.logsumexp(dim=3)
+        return output
+
+    def find_learning_rates(classifier, train_loader, end=None, alpha=0.01, gamma=0.01, tol=0.01, max_lr=1):
+
+        def normalized(X): return X / X.norm()
+        psis = [normalized(torch.randn((utils.num_parameters(net),))).to(device) for net in classifier.networks]
+        norm_psis = [psi.norm() for psi in psis]
+        pgrads = [[p for p in net.parameters() if p.requires_grad] for net in classifier.networks]
+        if end is None:
+            end = len(psis)
+        ones = torch.ones((end, args.ntry), device=device, dtype=dtype)
+        #while not converged:
+        for idx, (x, y)  in enumerate(train_loader):
+            classifier.zero_grad()
+            #x, y  =next(train_loader)
+            x = x.to(device)
+            y = y.to(device)
+            out_class = classifier(x, end)  # LxTxBxC,  # each output for each layer
+            #out = model(x).unsqueeze(0).unsqueeze(0) # 1x1xBxC
+            # cross entropy loss on samples
+            loss = ce_loss(out_class, y)  # LxTxB
+            loss.mean(dim=2).backward(ones)
+            # record the gradient and set it to zero
+            g_1s = [utils.get_grad_to_vector(pgrad, zero=True) for pgrad in pgrads]
+
+            # current weights of the model
+            weights = [torch.nn.utils.parameters_to_vector(pgrad) for pgrad in pgrads]
+
+            # perturbation on the weights
+            perturbeds = [ w + alpha * normalized(psi) for w,psi in zip(weights, psis)]
+            for perturbed, pgrad in zip(perturbeds, pgrads):
+                torch.nn.utils.vector_to_parameters(perturbed, pgrad)
+            #weights_prev = utils.perturb_weights(model, alpha, psi)
+            # new output with the perturbed weights
+            out_class = classifier(x, end)  # LxTxBxC,  # each output for each layer
+            loss = ce_loss(out_class, y)  # LxTxB
+            loss.mean(dim=2).backward(ones)
+            # record the second gradient
+            g_2s = [utils.get_grad_to_vector(pgrad, zero=True) for pgrad in pgrads]
+
+            # exponential average of the direction psi
+            psis, psi_prevs = [(1-gamma) * psi + gamma / alpha * (g_2 - g_1) for psi, g_1, g_2, in zip(psis, g_1s, g_2s)], psis
+            norm_psis, norm_prevs =[ psi.norm() for psi in psis], norm_psis
+            # set the weights to previous value
+            for w, pgrad in zip(weights, pgrads):
+                torch.nn.utils.vector_to_parameters(w, pgrad)
+
+            variations = [abs(norm_psi - norm_prev) / norm_prev for norm_psi, norm_prev in zip(norm_psis, norm_prevs)]
+            #converged = min(variations) < tol
+            converged = False
+
+            if converged:
+                break
+
+        return [min(max_lr, 1/norm_psi) for norm_psi in norm_psis]
+
+    lrs = find_learning_rates(classifier, train_loader)
 
     param_list = [{'params': param, 'lr': lr} for param, lr in zip(parameters, lrs)]
 
@@ -278,20 +354,6 @@ if __name__ == '__main__':
     #mse_loss = nn.MSELoss()
     #ce_loss_check = nn.CrossEntropyLoss(reduction='none')
 
-    def ce_loss(input, target):
-        '''Batch cross entropy loss
-
-        input: LxTxBxC output of the linear model
-        target: Bx1: the target classes
-
-        output: LxTxB the loss for each try
-        '''
-
-
-        L, T, B, C = input.size()
-        cond = input.gather(3,target.view(1, 1, -1, 1).expand(L, T, -1, -1)).squeeze(3)
-        output = - cond + input.logsumexp(dim=3)
-        return output
 
     def get_checkpoint():
         '''Get current checkpoint'''
@@ -398,6 +460,15 @@ if __name__ == '__main__':
                 or epoch > start_epoch + args.nepochs
                 )
 
+        # update the learning rates
+        if args.lr_update > 0 and epoch % args.lr_update == 0:
+            lrs = find_learning_rates(classifier, train_loader, end=end)
+            print("Updating the learning rates ", lrs, file=logs)
+            for g, lr in zip(optimizer.param_groups[:end], lrs):
+                g['lr'] = lr
+
+
+
 
         quant.loc[pd.IndexSlice[epoch, ('train', 'err', range(1, end+1))]] =  err_train.reshape(-1)
         quant.loc[pd.IndexSlice[epoch, ('train', 'loss', range(1, end+1))]] =  loss_train.reshape(-1)
@@ -423,7 +494,9 @@ if __name__ == '__main__':
         quant.loc[pd.IndexSlice[epoch, ('test', 'loss')]] =  loss_test.reshape(-1)
 
 
-        end = err_train.max(axis=1).nonzero()[0].max() + 1  # requires _all_ the tries to be 0 to stop the computation, 1 indexed
+        # err_train is of size LxT
+        #end = err_train.max(axis=1).nonzero()[0].max() + 1  # requires _all_ the tries to be 0 to stop the computation, 1 indexed
+        end = err_train.min(axis=1).nonzero()[0].max() + 1  # requires one try to be 0 to stop the computation, 1 indexed
         if args.end_layer is not None:
             end = min(end, args.end_layer)
 
@@ -470,7 +543,7 @@ if __name__ == '__main__':
 
         plt.close('all')
 
-        if args.save_model and (epoch) % 5 == 0:  # we save every 5 epochs
+        if args.save_model > 0  and (epoch % args.save_model) == 0:  # we save every save_model epochs
             save_checkpoint()
 
         if stop:

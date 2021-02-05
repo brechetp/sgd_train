@@ -13,6 +13,7 @@ matplotlib.style.use('ggplot')
 import seaborn as sns
 sns.set_theme()
 
+import math
 import models
 
 import torch.optim
@@ -39,8 +40,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Training a classifier to inspect the layers')
     parser.add_argument('--dataset', '-dat', default='cifar10', type=str, help='dataset')
     parser.add_argument('--dataroot', '-droot', default='./data/', help='the root for the input data')
-    parser.add_argument('--name', default='vgg-16', type=str, help='the name of the experiment')
+    parser.add_argument('--name', default='vgg', type=str, help='the name of the experiment')
     parser.add_argument('--learning_rate', '-lr', type=float, default=1e-2, help='leraning rate')
+    parser.add_argument('--lr_mode', '-lrm', default="max", choices=["max", "hessian", "num_param", "manual"], help="the mode of learning rate attribution")
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
@@ -62,11 +64,12 @@ if __name__ == '__main__':
     parser_feat = parser.add_mutually_exclusive_group()
     parser_feat.add_argument('--feature_extract', action='store_true', dest='feature_extract', help='use the pretrained model as a feature extractor')
     parser_feat.add_argument('--no-feature_extract', action='store_false', dest='feature_extract')
-    parser.set_defaults(feature_extract=True)
+    parser.set_defaults(feature_extract=False)
     parser_proceed = parser.add_mutually_exclusive_group()
     parser_proceed.add_argument('--proceed', action='store_true', dest='proceed', help='proceed with the same parameters')
     parser_proceed.add_argument('--discontinue', action='store_false', dest='proceed')
     parser.set_defaults(process=True)
+    parser.add_argument('--tol', type=float, default=0.15, help="the tolerance in error rate for stoping")
 
 
 
@@ -76,24 +79,11 @@ if __name__ == '__main__':
     #device = torch.device('cpu')
 
     if args.output_root is None:
+        args.output_root = utils.get_output_root(args)
         # default output directory
 
-        date = datetime.date.today().strftime('%y%m%d')
-        args.output_root = f'results/{args.dataset}/{date}'
-
     if args.vary_name is not None:
-        name = ''
-        for field in args.vary_name:
-            if field in args:
-                arg = args.__dict__[field]
-                if isinstance(arg, bool):
-                    dirname = f'{field}' if arg else f'no-{field}'
-                else:
-                    val = str(arg)
-                    key = ''.join(c[0] for c in field.split('_'))
-                    dirname = f'{key}-{val}'
-                name = os.path.join(name, dirname)
-        args.name = name if name else args.name
+        args.name = utils.get_name(args)
 
     dtype = torch.float
     num_gpus = torch.cuda.device_count()
@@ -181,7 +171,9 @@ if __name__ == '__main__':
                                                              )
     train_loader, size_train,\
         val_loader, size_val,\
-        test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset, batch_size =args.batch_size, ss_factor=1, size_max=args.size_max, collate_fn=None, pin_memory=False)
+        test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset,
+                                                       batch_size =args.batch_size, ss_factor=0.8,
+                                                       size_max=args.size_max, collate_fn=None, pin_memory=False)
 
     #model = models.cnn.CNN(1)
 
@@ -218,8 +210,83 @@ if __name__ == '__main__':
 
 
 
+    ce_loss = nn.CrossEntropyLoss()
 
+    def find_learning_rate(model, train_loader, alpha=1e-3, gamma=0.01, tol=0.01):
+        '''Approximate the eigenvector with largest eigenvalue of the Hessian to set the learning rate as the inverse of its norm
+        https://proceedings.neurips.cc/paper/1992/file/30bb3825e8f631cc6075c0f87bb4978c-Paper.pdf'''
 
+        def normalized(X): return X / X.norm()
+        #def normalized(X): return X
+        psi = normalized(torch.randn((utils.num_parameters(model),))).to(device)
+        parameters_grad = [p for p in model.parameters() if p.requires_grad]
+        #while not converged:
+        for idx, (x, y)  in enumerate(train_loader):
+            model.zero_grad()
+            #x, y  =next(train_loader)
+            x = x.to(device)
+            y = y.to(device)
+            out_class = model(x)  # TxBxC,  # each output for each layer
+            #out = model(x).unsqueeze(0).unsqueeze(0) # 1x1xBxC
+            # cross entropy loss on samples
+            loss = ce_loss(out_class, y)  # LxTxB
+            loss.mean().backward()
+            # record the gradient and set it to zero in the network
+            g_1 = utils.get_grad_to_vector(parameters_grad, zero=True)
+
+            # current weights of the model
+            weights = torch.nn.utils.parameters_to_vector(parameters_grad)
+
+            # perturbation on the weights
+            perturbed = weights + alpha * normalized(psi)
+            torch.nn.utils.vector_to_parameters(perturbed, parameters_grad)
+            #weights_prev = utils.perturb_weights(model, alpha, psi)
+            # new output with the perturbed weights
+            out_class = model(x)  # TxBxC,  # each output for each layer
+            loss = ce_loss(out_class, y)  # LxTxB
+            loss.mean().backward()
+            # record the second gradient
+            g_2 = utils.get_grad_to_vector(parameters_grad, zero=True)
+
+            # exponential average of the direction psi
+            psi, psi_prev = (1-gamma) * psi + gamma / alpha * (g_2 - g_1), psi
+            norm_psi, norm_prev = psi.norm(), psi_prev.norm()
+            # set the weights to previous value
+            torch.nn.utils.vector_to_parameters(weights, parameters_grad)
+
+            variation = abs(norm_psi - norm_prev) / norm_prev
+            #converged = variation < tol
+            converged = False  # convergence criterion was not good enough, perform on the whole dataset
+
+            if converged:
+                break
+
+        return 1/norm_psi
+
+    def get_lr():
+        """The learning rate depending on the lr_mode parameter"""
+
+        global args, model, num_parameters
+
+        rule_of_thumb = math.sqrt(1/num_parameters)
+        hessian = find_learning_rate(model, train_loader)
+        print("1 / norm(lambda_max) = {:2e}".format(hessian), file=logs)
+        print("sqrt(1 / num_param) = {:2e}".format(rule_of_thumb), file=logs)
+        #rule_of_thumb_train = math.sqrt(classifier.n_tries/num_parameters_trainable)
+        #rule_hessian = find_learning_rate(classifier, train_loader)
+        if args.lr_mode == "hessian":
+            lr = hessian
+        elif args.lr_mode == "num_param":  # rule of thumb
+            lr = rule_of_thumb
+        elif args.lr_mode == "manual":
+            lr = args.learning_rate
+        elif args.lr_mode == "max":
+            lr = min(args.learning_rate, rule_of_thumb, hessian)
+
+        return lr
+    #learning_rate = min(args.max_learning_rate, rule_of_thumb, find_learning_rate(classifier, train_loader))
+    #learning_rate = rule_of_thumb
+    learning_rate = get_lr()
 
     #print('Linear classifier: {}'.format(str(linear_classifier)), file=logs)
     #parameters = [ p for p in model.parameters() if not feature_extraction or p.requires_grad ]
@@ -235,16 +302,19 @@ if __name__ == '__main__':
             #parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
                 {'params': model.classifier.parameters()},
                 {'params': model.features.parameters(), 'lr': 1e-5}],
-                lr=args.learning_rate, momentum=0.95)
+                lr=learning_rate, momentum=0.95, nesterov=True)
     else:
         optimizer = torch.optim.SGD([
             #parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
                 {'params': model.classifier.parameters()}],
                 #{'params': model.features.parameters(), 'lr': 1e-5}],
-                lr=args.learning_rate, momentum=0.95)
+                lr=args.learning_rate, momentum=0.95, nesterov=True)
 
     #lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.9)
+
+    print("Optimizer: {}".format(optimizer), file=logs, flush=True)
+    print("LR Scheduler: {}".format(lr_scheduler), file=logs, flush=True)
 
     if 'optimizer' in checkpoint.keys():
         try:
@@ -286,7 +356,7 @@ if __name__ == '__main__':
 
         returns: err of dim 0
         '''
-        return  (x.argmax(dim=1)!=y).float().mean(dim=0)
+        return  (x.argmax(dim=1)!=targets).float().mean(dim=0)
 
     #mse_loss = nn.MSELoss()
     ce_loss = nn.CrossEntropyLoss()
@@ -303,7 +373,7 @@ if __name__ == '__main__':
         global optimizer
 
         checkpoint = {'model':model.state_dict(),
-                                'stats':stats,
+                                #'stats':stats,
                       'quant': quant,
                                 'args' : args,
                                 'optimizer':optimizer.state_dict(),
@@ -313,13 +383,15 @@ if __name__ == '__main__':
         return checkpoint
 
 
-    def save_checkpoint(fname=None, checkpoint=None):
+    def save_checkpoint(checkpoint=None, name=None, fname=None):
         '''Save checkpoint to disk'''
 
         global path_output
+        if name is None:
+            name = "checkpoint"
 
         if fname is None:
-            fname = os.path.join(path_output, 'checkpoint.pth')
+            fname = os.path.join(path_output, name + '.pth')
 
         if checkpoint is None:
             checkpoint = get_checkpoint()
@@ -333,8 +405,36 @@ if __name__ == '__main__':
     separated=False
     tol = 1e-5
     checkpoint_min=None
-    wait=100  # in epochs, tolerance for the minimum
+    wait=5  # in epochs, tolerance for the minimum
+    err_min = 1
+    cnt = 0
     frozen = False  # will freeze the update to check if data is separated
+
+    def eval_epoch(model, dataloader):
+
+
+        model.eval()
+        #loss_hidden_tot = np.zeros(classifier.L)  # for the
+        loss_mean = 0
+        err_mean = 0
+        #ones_hidden = torch.ones(classifier.L, device=device, dtype=dtype)
+
+        with torch.no_grad():
+            for idx, (x, y) in enumerate(dataloader):
+
+                x = x.to(device)
+                y = y.to(device)
+                out_class = model(x)  # BxC,  # each output for each layer
+                loss = ce_loss(out_class, y)  # LxTxB
+                err = zero_one_loss(out_class, y)  # T
+                err_mean = (idx * err_mean + err.detach().cpu().numpy()) / (idx+1)  # mean error
+                loss_mean = (idx * loss_mean + loss.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean loss
+                # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
+                #break
+
+
+        return loss_mean, err_mean
+
 
 
     while not stop:
@@ -361,7 +461,8 @@ if __name__ == '__main__':
             #err_train = (idx * err_train + err.detach().cpu().numpy()) / (idx+1)
 
             loss_train = (idx * loss_train + loss.detach().cpu().numpy()) / (idx+1)
-            err_train += zero_one_loss(out,y).detach().cpu().numpy()
+            err = zero_one_loss(out,y)
+            err_train = (idx * err_train + err.detach().cpu().numpy() )/ (idx+1)
             #loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
             #loss_hidden.mean(dim=1).backward(ones)
             if not frozen:
@@ -373,7 +474,7 @@ if __name__ == '__main__':
 
         epoch += 1 if not frozen else 0
 
-        quant.loc[epoch, ('train', 'err')] = err_train/idx
+        quant.loc[epoch, ('train', 'err')] = err_train
         quant.loc[epoch, ('train', 'loss')] = loss_train
 
         separated =  frozen and err_train == 0
@@ -391,57 +492,38 @@ if __name__ == '__main__':
         #    loss_min = loss_train
 
         #stop = (#False #last_min > wait
-        stop = (separated
-                or epoch > start_epoch + args.nepochs) # no improvement over wait epochs or total of 400 epochs
 
         #last_min += 1
-        #err_train_test = np.zeros(args.ntry)
-        err_test = 0
+        #err_train_val = np.zeros(args.ntry)
+        loss_val, err_val = eval_epoch(model, val_loader)
         #err_train_hidden  = np.zeros(args.ntry)
-        #err_hidden_test  = np.zeros(args.ntry)
-        loss_test = 0
-        #loss_hidden_test = np.zeros(args.ntry)
+        #err_hidden_val  = np.zeros(args.ntry)
+        quant.loc[epoch, ('val', 'err')] = err_val
+        quant.loc[epoch, ('val', 'loss')] = loss_val
 
-        model.eval()
-        with torch.no_grad():
+        if err_val < err_min:
+            err_min = err_val
+            chkpt_min = get_checkpoint()
+            cnt = 0
+        elif err_val > err_min:
+            cnt += 1
 
-            #testloader_iter = iter(test_loader)
-            for idx, (x, y)  in enumerate(test_loader, 1):
-
-                x = x.to(device)
-                y = y.to(device)
-                #out_train, out_train_hidden = linear_classifier(x)  # TxBxC, LxBxC  # each output for each layer
-                out_test = model(x)
-                err_test += zero_one_loss(out_test, y).detach().cpu().numpy()
-                loss_test = (idx * loss_test + ce_loss(out_test, y).detach().cpu().numpy())/(idx+1)
-                #err_train_hidden += zero_one_loss(out_train_hidden, y).detach().cpu().numpy()
-                #if idx-1 < len(test_loader):
-                #    t, w = next(testloader_iter)
-                #    t = t.to(device)
-                #    w = w.to(device)
-                #    out_test, out_hidden_test = linear_classifier(t)
-                #    loss_test = (idx * loss_test + ce_loss(out_test, w).mean(dim=1).detach().cpu().numpy())/(idx+1)
-                #    loss_hidden_test = (idx * loss_hidden_test + ce_loss(out_hidden_test, w).mean(dim=1).detach().cpu().numpy())/(idx+1)
-                #    err_train_test += zero_one_loss(out_test, w).detach().cpu().numpy()
-                #    err_hidden_test += zero_one_loss(out_hidden_test, w).detach().cpu().numpy()
-
-
-        #stats['err_hidden'].append(err_train_hidden/idx)
-        #stats['err_hidden_test'].append(err_hidden_test/idx)
-        quant.loc[epoch, ('test', 'err')] = err_test / idx
-        quant.loc[epoch, ('test', 'loss')] = loss_test
-        #stats['err_test'].append(err_test/idx)
-        #stats['loss_test'].append(loss_test)
+        stop = (err_val <=args.tol
+                or cnt > wait
+                or separated
+                or epoch > start_epoch + args.nepochs) # no improvement over wait epochs or total of 400 epochs
+        #stats['err_val'].append(err_val/idx)
+        #stats['loss_val'].append(loss_val)
         #stats['loss_hidden_train'].append(loss_hidden_tot)
-        #stats['loss_hidden_test'].append(loss_hidden_test)
+        #stats['loss_hidden_val'].append(loss_hidden_val)
 
         #stats['epochs'].append(epoch)
 
 
 
-        print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
-        epoch, quant.loc[epoch, ('train', 'loss')], quant.loc[epoch, ('train', 'err')], quant.loc[epoch, ('test', 'loss')], quant.loc[epoch, ('test', 'err')]),
-        #stats['loss_test']['ce'][-1], stats['loss_test']['zo'][-1]),
+        print('ep {}, train loss (err) {:g} ({:g}), val loss (err) {:g} ({:g})'.format(
+        epoch, quant.loc[epoch, ('train', 'loss')], quant.loc[epoch, ('train', 'err')], quant.loc[epoch, ('val', 'loss')], quant.loc[epoch, ('val', 'err')]),
+        #stats['loss_val']['ce'][-1], stats['loss_val']['zo'][-1]),
         file=logs, flush=True)
 
 
@@ -468,63 +550,6 @@ if __name__ == '__main__':
 
         plt.savefig(fname=os.path.join(path_output, 'losses.pdf'))
 
-        plt.close('all')
-
-        #fig, axes = plt.subplots(2, 1, squeeze=True, sharex=True)
-        #axes[0].plot(stats['epochs'], stats['err_train'],  marker='o')
-        #axes[1].plot(stats['epochs'], stats['err_test'], marker='o')
-        #axes[0].set_title('Train')
-        #axes[1].set_title('Test')
-        ##fig.suptitle(f'ntry={args.ntry}, remove={linear_classifier.Rs}')
-        #fig.suptitle(f'ds={args.dataset}')
-        #axes[0].set_yscale('log')
-        #axes[1].set_yscale('log')
-
-        #plt.savefig(fname=os.path.join(path_output, 'zero_one_loss.pdf'))
-
-       # fig, axes= plt.subplots(2, 1, squeeze=True, sharey=True, sharex=True)
-
-        #axes[0].plot(stats['epochs'], stats['err_hidden'], marker='o')
-        #axes[0].legend([f'Layer {i}' for i in range(1, 1+args.ntry)])
-    #axes[0].set_title('Train')
-
-       # axes[0].set_ylabel('Error')
-       # axes[0].set_yscale('linear')
-
-       # axes[1].plot(stats['epochs'], stats['err_hidden_test'])
-        #ax.plot(stats['epochs'], stats['err_test'], label='Test')
-       # axes[1].legend('test')
-       # axes[1].set_title('Test')
-       # axes[1].set_yscale('linear')
-       # axes[1].set_ylabel('Error')
-
-        #fig.suptitle(f'Rs={linear_classifier.Rs}')
-        #for ax in axes:
-        #    ax.label_outer()
-        #plt.savefig(fname=os.path.join(path_output, 'zo-layers.pdf'))
-
-        #fig = plt.figure()
-        #ax = fig.add_subplot(111)
-        #ax.plot(stats['epochs'], stats['loss_train'])
-        ##ax.plot(stats['epochs'], stats['loss_test']['ce'], label='Test')
-        ##ax.legend()
-        #ax.set_title('Cross-entropy loss for the tries')
-        #ax.set_yscale('linear')
-        #plt.savefig(fname=os.path.join(path_output, 'cross_entropy_loss.pdf'))
-
-        #fig = plt.figure()
-        #ax = fig.add_subplot(111)
-        #ax.plot(stats['epochs'], stats['loss_hidden_train'])
-        ##ax.plot(stats['epochs'], stats['loss_test']['ce'], label='Test')
-        ##ax.legend([f'Layer {i}' for i in range(1, 1+args.ntry)])
-        #ax.set_title('Cross-entropy loss for the layers')
-        #ax.set_yscale('linear')
-        #plt.savefig(fname=os.path.join(path_output, 'cross_entropy_loss_hidden.pdf'))
-
-        #fig=plt.figure()
-        #plt.plot(stats['epochs'], stats['lr'], label='lr')
-        #plt.legend()
-        #plt.savefig(fname=os.path.join(path_output, 'lr.pdf'))
 
         plt.close('all')
 
@@ -535,11 +560,7 @@ if __name__ == '__main__':
     logs.close()
     logs_debug.close()
 
-    if separated:
-        save_checkpoint()
-        print("Data is separated.", file=logs)
-        sys.exit(0)  # success
-    else:
-        #torch.save(checkpoint_min, os.path.join(path_output, 'checkpoint.pth'))
-        sys.exit(1)  # failure
+    save_checkpoint(chkpt_min, 'checkpoint_min')
+    save_checkpoint()
+    sys.exit(0)  # success
 

@@ -221,9 +221,85 @@ if __name__ == '__main__':
     #        )
     #optimizer = torch.optim.RMSprop(parameters, lr=args.learning_rate)
 
+    def zero_one_loss(x, targets):
+        ''' x: TxBxC
+        targets: Bx1
+
+        returns: err of size T
+        '''
+        return  (x.argmax(dim=2)!=y).float().mean(dim=1)
+
+    #mse_loss = nn.MSELoss()
+    #ce_loss_check = nn.CrossEntropyLoss(reduction='none')
+
+    def ce_loss(input, target):
+        '''Batch cross entropy loss
+
+        input: TxBxC output of the linear model
+        target: Bx1: the target classes
+
+        output: TxB the loss for each try
+        '''
+
+
+        T, B, C = input.size()
+        cond = input.gather(2,target.view(1, -1, 1).expand(T, -1, -1)).squeeze(2)  # TxBx1
+        output = - cond + input.logsumexp(dim=-1)
+        return output
 
     #optimizer = torch.optim.SGD(param_list, momentum=0.95
-    optimizer = torch.optim.SGD(parameters, momentum=0.95, lr=args.learning_rate,
+    def find_learning_rate(model, train_loader, alpha=0.01, gamma=0.01, tol=0.01):
+
+        def normalized(X): return X / X.norm()
+        psi = normalized(torch.randn((utils.num_parameters(model.network),))).to(device)
+        parameters_grad = [p for p in model.network.parameters() if p.requires_grad]
+        #while not converged:
+        for idx, (x, y)  in enumerate(train_loader):
+            model.zero_grad()
+            #x, y  =next(train_loader)
+            x = x.to(device)
+            y = y.to(device)
+            out_class = model(x)  # TxBxC,  # each output for each layer
+            #out = model(x).unsqueeze(0).unsqueeze(0) # 1x1xBxC
+            # cross entropy loss on samples
+            loss = ce_loss(out_class, y)  # LxTxB
+            loss.mean().backward()
+            # record the gradient and set it to zero
+            g_1 = utils.get_grad_to_vector(parameters_grad, zero=True)
+
+            # current weights of the model
+            weights = torch.nn.utils.parameters_to_vector(parameters_grad)
+
+            # perturbation on the weights
+            perturbed = weights + alpha * normalized(psi)
+            torch.nn.utils.vector_to_parameters(perturbed, parameters_grad)
+            #weights_prev = utils.perturb_weights(model, alpha, psi)
+            # new output with the perturbed weights
+            out_class = model(x)  # TxBxC,  # each output for each layer
+            loss = ce_loss(out_class, y)  # LxTxB
+            loss.mean().backward()
+            # record the second gradient
+            g_2 = utils.get_grad_to_vector(parameters_grad, zero=True)
+
+            # exponential average of the direction psi
+            psi, psi_prev = (1-gamma) * psi + gamma / alpha * (g_2 - g_1), psi
+            norm_psi, norm_prev = psi.norm(), psi_prev.norm()
+            # set the weights to previous value
+            torch.nn.utils.vector_to_parameters(weights, parameters_grad)
+
+            variation = abs(norm_psi - norm_prev) / norm_prev
+            converged = variation < tol
+            #converged = False
+
+            if converged:
+                break
+
+        return 1/norm_psi
+
+    learning_rate = find_learning_rate(classifier, train_loader) / 2
+    print('Learning rate: {}'.format(learning_rate), file=logs, flush=True)
+
+    optimizer = torch.optim.SGD(parameters, momentum=0, lr=learning_rate
         #parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
         #parameters, lr=args.learning_rate, momentum=0.95
     )
@@ -269,31 +345,6 @@ if __name__ == '__main__':
 
     classes = torch.arange(num_classes).view(1, -1).to(device)  # the different possible classes
 
-    def zero_one_loss(x, targets):
-        ''' x: TxBxC
-        targets: Bx1
-
-        returns: err of size T
-        '''
-        return  (x.argmax(dim=2)!=y).float().mean(dim=1)
-
-    #mse_loss = nn.MSELoss()
-    #ce_loss_check = nn.CrossEntropyLoss(reduction='none')
-
-    def ce_loss(input, target):
-        '''Batch cross entropy loss
-
-        input: TxBxC output of the linear model
-        target: Bx1: the target classes
-
-        output: TxB the loss for each try
-        '''
-
-
-        T, B, C = input.size()
-        cond = input.gather(2,target.view(1, -1, 1).expand(T, -1, -1)).squeeze(2)  # TxBx1
-        output = - cond + input.logsumexp(dim=-1)
-        return output
 
     def get_checkpoint():
         '''Get current checkpoint'''
@@ -328,6 +379,10 @@ if __name__ == '__main__':
         torch.save(checkpoint, fname)
 
 
+
+
+
+
     DO_SANITY_CHECK = False
     stop = False
     separated = False
@@ -335,6 +390,7 @@ if __name__ == '__main__':
     frozen = False
     ones = torch.ones(args.ntry, device=device, dtype=dtype)
     params_discarded = []  # for the discarded parameters
+
 
 
 
@@ -362,7 +418,7 @@ if __name__ == '__main__':
                 err += zero_one_loss(out,y).mean().detach().cpu().numpy()  # just check if the number of error is 0
             else:
                 optimizer.zero_grad()
-                out_class = classifier(x)  # LxTxBxC, LxBxC  # each output for each layer
+                out_class = classifier(x)  # TxBxC,  # each output for each layer
                 loss = ce_loss(out_class, y)  # LxTxB
                 #loss_hidden = ce_loss(out_hidden, y)
                 err = zero_one_loss(out_class, y)  # T
@@ -481,4 +537,6 @@ if __name__ == '__main__':
             else:
                 print("Data is NOT separated.", file=logs)
                 sys.exit(1)  # failure
+
+
 

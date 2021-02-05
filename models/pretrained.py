@@ -1,15 +1,19 @@
 from torchvision import models, datasets, transforms
 import torch.nn as nn
+import utils
 
 def set_parameter_requires_grad(model, grad):
 
     for param in model.parameters():
         param.requires_grad = grad
 
-def initialize_model(model_name, pretrained, feature_extract=True, freeze=False, num_classes=10, use_pretrained=True) -> (nn.Module, int):
+def initialize_model(model_name, pretrained, feature_extract=True, freeze=False, num_classes=10, use_pretrained=True, *args, **kwargs) -> (nn.Module, int):
 
     if model_name.find('vgg') != -1:
-        model_ft = models.vgg16(pretrained=pretrained)
+        if model_name == 'vgg-16':
+            model_ft = models.vgg16(pretrained=pretrained)
+        elif model_name == 'vgg-11':
+            model_ft = models.vgg11(pretrained=pretrained)
         #model_ft.requires_grad(not feature_extract)
         #set_parameter_requires_grad(model_ft, not feature_extract)
 
@@ -23,8 +27,19 @@ def initialize_model(model_name, pretrained, feature_extract=True, freeze=False,
         set_parameter_requires_grad(model_ft, not freeze)
 
         if feature_extract:
+            if kwargs:
+                depth = kwargs.get('depth', 2)
+                width = kwargs.get('width', 500)
+                widths = depth*[width]
+                sizes = [num_ftrs, *widths, num_classes]
+                #mlp = utils.construct_mlp_net(sizes, fct_act=nn.LeakyReLU, kwargs_act={'negative_slope': lrelu, 'inplace': True})
+                mlp = utils.construct_mlp_net(sizes, fct_act=nn.ReLU, args_act=[True])
+                model_ft.classifier = mlp
+
             set_parameter_requires_grad(model_ft.features, False)
             set_parameter_requires_grad(model_ft.classifier, True)
+
+        #model_ft.requires_grad(not feature_extract)
 
     elif model_name.find('resnet') != -1:
 

@@ -391,7 +391,7 @@ if __name__ == '__main__':
         #        label='Test')
         ax.legend()
         ax.set_xlabel('Epoch')
-        ax.set_ylabel('loss (nats)')
+        ax.set_ylabel('loss')
         ax.set_title('Cross-entropy loss')
         ax.set_yscale('linear')
         plt.savefig(fname=os.path.join(path_output, 'cross_entropy_loss.pdf'))

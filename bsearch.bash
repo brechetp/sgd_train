@@ -1,5 +1,4 @@
 #!/bin/bash
-
 model=$1
 dir='slurm/scripts'
 template='template.sbatch'
@@ -11,7 +10,7 @@ cp "$dir/$template" $batch_file
 
 exit_code=0
 tol=5  # the tolerance 
-supb=245
+supb=$2
 infb=0
 ntry=10
 date=`date +%y%m%d`  # format yymmdd
@@ -32,7 +31,7 @@ do
     #srun -p cuda -x cuda01,cuda02 python train_mnist.py --dataset $dataset --net_topology $nt --coefficient $c  --name $name -o $root
     cp "$dir/$template" $batch_file
     echo "python train_simple_classifier.py --model $model --remove $rs --name $name --ntry $ntry" >> $batch_file
-    sed -i "s/^#SLURM -J test_slurm/#SLURM -J $bname/" $batch_file
+    sed -i "s/^#SBATCH -J test_slurm/#SBATCH -J $bname/" $batch_file
     sbatch -W $batch_file
     exit_code=$?
     if (( $exit_code == 0 )); then # success return code

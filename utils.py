@@ -1,5 +1,6 @@
 import torchvision
 import torch
+import pandas as pd
 #from datasets.rsna import RSNADataset
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader, SubsetRandomSampler, SequentialSampler
@@ -17,7 +18,7 @@ import sys
 import argparse
 from os.path import join as join_path
 import models
-
+import datetime
 
 def pad_collate_fn(batch):
     '''collate function for images of different sizes'''
@@ -30,6 +31,31 @@ def pad_collate_fn(batch):
 
     return (data, torch.tensor(man, dtype=int), torch.tensor(age, dtype=torch.float))
 
+def get_output_root(args):
+
+    date = datetime.date.today().strftime('%y%m%d')
+    output_root = f'results/{args.dataset}/{date}'
+    return output_root
+
+def get_name(args):
+    name = ''
+    for field in args.vary_name:
+        if field in args:
+            arg = args.__dict__[field]
+            if isinstance(arg, bool):
+                dirname = f'{field}' if arg else f'no-{field}'
+            else:
+                val = str(arg)
+                if field == 'depth':
+                    key = 'L'
+                else:
+                    key = ''.join(c[0] for c in field.split('_'))
+                dirname = f'{key}-{val}'
+            name = os.path.join(name, dirname)
+    name = os.path.join(name, args.name)
+    if name  == "":
+        name = "debug"
+    return name
 
 def get_num_classes(dataset):
 
@@ -45,12 +71,14 @@ def get_num_classes(dataset):
 
 
 
-def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=None, normalize=False, transform=None, shuffle=0):
+def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=False,
+                normalize=False, tfm=None, shuffle=0):
 
 
     num_chs = 1 if dataset.lower() in [ 'rsna', 'mnist' ] else 3
+    valid_dataset = None
 
-    if transform is None:
+    if tfm is None:
         transform_lst = []
 
 
@@ -62,8 +90,9 @@ def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=None, 
         if normalize:
             transform_lst.append(transforms.Normalize(num_chs*(0.5,), num_chs*(0.5,)))
 
-
         transform = transforms.Compose(transform_lst)
+    else:
+        transform=tfm
 
     if dataset.lower() == 'rsna':
 
@@ -77,7 +106,28 @@ def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=None, 
 
     elif dataset.lower() == 'cifar10':
 
+        if tfm is None:
+            normalize_cifar10 = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                            std=[0.229, 0.224, 0.225])
+            transform = transform
+            if normalize:  # overwrites the normalize
+                transform=transforms.Compose([
+                transforms.ToTensor(),
+                normalize_cifar10,
+            ])
+        # if augment:
+            # transform_train=transforms.Compose([
+                # transforms.RandomHorizontalFlip(),
+                # transforms.RandomCrop(32, 4),
+                # transforms.ToTensor(),
+                # normalize,
+            # ])
+        # else:
+            # transform_train = transform
         train_dataset = CIFAR10(dataroot, train=True, transform=transform, download=True)
+
+
+        valid_dataset = CIFAR10(dataroot, train=True, transform=transform)
         test_dataset = CIFAR10(dataroot, train=False, transform=transform, download=True)
         #train_dataset  = RSNADataset(dataroot, transform)
         #test_dataset = RSNADataset(dataroot, transform, train=False)
@@ -89,7 +139,8 @@ def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=None, 
 
     elif dataset.lower() == 'mnist':
 
-        train_dataset = MNIST(dataroot, train=True, transform=transform, download=True, shuffle=shuffle)
+        train_dataset = MNIST(dataroot, train=True, transform=transform, download=True, shuffle=False)
+        valid_dataset = train_dataset
         test_dataset = MNIST(dataroot, train=False, transform=transform, download=True)
 
 
@@ -99,17 +150,25 @@ def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=None, 
         train_dataset = SVHN(dataroot, split='train', transform=transform, download=True)
         test_dataset = SVHN(dataroot, split='test',  transform=transform, download=True)
 
-    return train_dataset, test_dataset, num_chs
+    return train_dataset, valid_dataset, test_dataset, num_chs
 
 
 
-def get_dataloader(train_dataset, test_dataset, batch_size, ss_factor=1., size_max=None, collate_fn=None, pin_memory=False):
+def get_dataloader(train_dataset, valid_dataset, test_dataset, batch_size,
+                  size_max=None, collate_fn=None, num_workers=4,
+                   pin_memory=False):
     '''ss_factor: for the valid set'''
 
-    train_idx = torch.randperm(len(train_dataset))
-    train_size = int(len(train_dataset) * ss_factor)
-
+    #indices = torch.randperm(len(train_dataset))
+    indices = torch.arange(len(train_dataset))
+    train_size = round(len(train_dataset))
     val_size = len(train_dataset) - train_size
+
+    train_idx = indices[:train_size]
+    val_idx = indices[train_size:]
+
+    train_sampler = SubsetRandomSampler(train_idx)
+    val_sampler = SubsetRandomSampler(val_idx)
 
     if size_max is not None:
         train_size = min(size_max, train_size)
@@ -117,24 +176,26 @@ def get_dataloader(train_dataset, test_dataset, batch_size, ss_factor=1., size_m
     if test_dataset is None:
         test_size = None
     else:
-        test_idx = torch.randperm(len(test_dataset))
         test_size = len(test_dataset)
 
     #  train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
 
     train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=False,
-                              sampler=SubsetRandomSampler(train_idx[:train_size]),
+                              sampler=train_sampler,
                               collate_fn=collate_fn,
+                              num_workers=num_workers,
                               pin_memory=pin_memory)  # the first
 
-    val_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=False,
-                            sampler=SequentialSampler(train_idx[train_size:]),
+    val_loader = DataLoader(dataset=valid_dataset, batch_size=batch_size, shuffle=False,
+                            sampler=val_sampler,
                             collate_fn=collate_fn,
+                              num_workers=num_workers,
                             pin_memory=pin_memory) if val_size >0 else None # the rest of the indices
 
     test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size,
                              shuffle=True,
                              collate_fn=collate_fn,
+                              num_workers=num_workers,
                              pin_memory=pin_memory) if not(test_dataset is None) else None
 
     return train_loader,train_size, val_loader, val_size, test_loader, test_size
@@ -157,6 +218,15 @@ def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, arg
     idx = 0
     size = sizes[0]
     layers = []
+
+    if isinstance(size, tuple):
+        N, R = size
+        size =N-R  # the kept units
+        layers.append((
+            '{}{}-{}/{}'.format(models.classifiers.RandomSampler.__name__, idx, size, N),
+                models.classifiers.RandomSampler(N, R)
+                ))
+
     norm_layer = nn.BatchNorm1d
 
     for idx, new_size in enumerate(sizes[1:-1] if out_layer else sizes[1:], 1):  # for all layers specified in sizes
@@ -199,10 +269,79 @@ def construct_mlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, arg
 
     return OrderedDict(layers)
 
+# def construct_cnn_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, args_linear=[], kwargs_linear={}, tanh=False, out_layer=True, batchnorm=False, batchnorm_in=False):
+    # '''Constructs layers  with each layer being of sizes[i]
+    # with specified init and end size in sizes[0] sizes[-1]
+
+    # Args:
+        # sizes (list): the list [nin, *layers, nout] of dimensions for the layers
+        # layer (nn.): the linear transformation for the layers (default: nn.Linear)
+        # fct_act: the non linear activation function (default: nn.ReLU)
+        # tanh (bool): if true will append a tanh activation layer as the last layer (to map output to -1, 1)
+        # batchnorm (bool): if true, use a batch norm
+
+    # return: ordered dict of layers
+# '''
+
+    # idx = 0
+    # size = sizes[0]
+    # layers = []
+
+    # if isinstance(size, tuple):
+        # N, R = size
+        # size =N-R  # the kept units
+        # layers.append((
+            # '{}{}-{}/{}'.format(models.classifiers.RandomSampler.__name__, idx, size, N),
+                # models.classifiers.RandomSampler(N, R)
+                # ))
+
+    # norm_layer = nn.BatchNorm1d
+
+    # for idx, new_size in enumerate(sizes[1:-1] if out_layer else sizes[1:], 1):  # for all layers specified in sizes
+        # # switch the sizes
+        # prev_size, size = size, new_size
+        # # adds the layer
+        # layers.append(
+                # nn.Conv2d(prev_size, size, *args_linear, **kwargs_linear)
+                # )
+        # layers.append(
+            # nn.Conv2d(
+        # #if batchnorm:
+            # #if idx == 1 and not out_layer and not batchnorm_in:  # for discriminator network, no normalization at the beginning
+            # #    pass
+            # #  elif out_layer and not tanh and idx == len(sizes) - 2:  # for generator, no batchnorm at the last layer (following DCGAN)
+                # #  pass
+            # #else:
+                # # layers.append((
+                    # # '{}{}-{}'.format(norm_layer.__name__, idx, size),
+                    # # norm_layer(size),
+                    # # ))
+
+        # # adds the non linear activation function
+        # layers.append((
+                # '{}{}-{}'.format(fct_act.__name__, idx, size),
+                # fct_act(*args_act, **kwargs_act)
+                # ))
+
+    # # at  the end of the loop, we still have the last layer to add, but without
+    # # activation
+    # if out_layer:
+        # layers.append((
+            # '{}{}-{}-{}'.format(nn.Linear.__name__, idx+1, size, sizes[-1]),
+            # nn.Linear(size, sizes[-1], *args_linear, **kwargs_linear)
+            # ))
+
+        # if tanh:
+            # layers.append((
+                # 'tanh', nn.Tanh()
+                # ))
+
+    # return OrderedDict(layers)
+
 def construct_mmlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, args_linear=[], num_tries=10):
     '''Constructs multilinear layers  with each layer being of sizes[i]
     with specified init and end size in sizes[0] sizes[-1]
-    The first layer is a LinearMasked, the subsequent ones are MultiLinear
+    The first layer is a LinearParallelMasked, the subsequent ones are MultiLinear
 
     The first size should be the total number of neurons N and the ones that are remove R in a tuple (N, R)
 
@@ -220,26 +359,28 @@ def construct_mmlp_layers(sizes, fct_act=nn.ReLU, args_act=[], kwargs_act={}, ar
     if fct_act is nn.ReLU and args_act == []:
         args_act = [ True ]  # inplace
     MultiLinear = models.classifiers.MultiLinear
-    LinearMasked = models.classifiers.LinearMasked
-    layers.append(('{}-{}-{}'.format(LinearMasked.__name__, N, R),
-                    LinearMasked((N, R), sizes[1], num_tries=num_tries),
-                    ))
+    N, R = sizes[0]
+    size =N-R  # the kept units
+    layers.append((
+        '{}{}-{}/{}'.format(models.classifiers.RandomSamplerParallel.__name__, idx, size, N),
+            models.classifiers.RandomSamplerParallel(N, R, num_tries)
+            ))
     idx = 0
-    size = sizes[1]  # init
 
-    for idx, new_size in enumerate(sizes[2:], 1):  # for all layers specified in sizes
+    for idx, new_size in enumerate(sizes[1:], 1):  # for all layers specified in sizes
         # switch the sizes
 
         prev_size, size = size, new_size
-
-        layers.append((
-                '{}{}-{}'.format(fct_act.__name__, idx, prev_size),
-                fct_act(*args_act, **kwargs_act)
-                ))
         layers.append((
                 '{}{}-{}-{}'.format(MultiLinear.__name__, idx, prev_size, size),
                 MultiLinear(prev_size, size, num_tries=num_tries),
                 ))
+
+        if idx < len(sizes)-1:  # no activation for the output layer
+            layers.append((
+                    '{}{}-{}'.format(fct_act.__name__, idx, prev_size),
+                    fct_act(*args_act, **kwargs_act)
+                    ))
     # adds the non linear activation function
 
     # at the end, appends the out layer without activation function
@@ -254,9 +395,21 @@ def construct_mmlp_net(sizes, num_tries=10, fct_act=nn.ReLU):
     layers = construct_mmlp_layers(sizes, fct_act, num_tries=num_tries)
     return nn.Sequential(layers)
 
-def num_parameters(model, only_require_grad=False):
+def num_parameters(model, only_require_grad=True):
         '''Return the number of parameters in the model'''
         return sum(p.numel() for p in model.parameters() if not only_require_grad or p.requires_grad)
+
+def get_grad_to_vector(parameters, zero=False):
+    grad = []
+    for p in parameters:
+        if not p.requires_grad:
+            continue
+        grad.append(p.grad.view(-1))
+        if zero:
+            p.grad = None
+    return torch.cat(grad)
+
+
 
 def get_norm_weights(model):
 
@@ -275,8 +428,11 @@ def parse_transform(fname, *args):
     lines = process.communicate()[0].decode('utf-8').strip().splitlines()
     size = None
     transform_lst = []
+    transform = None
     depth = 0
     TRANSFORMS = {
+        'RandomHorizontalFlip': transforms.RandomHorizontalFlip,
+        'RandomCrop': transforms.RandomCrop,
         'RandomAffine' : transforms.RandomAffine,
         'Resize': transforms.Resize,
         'ToTensor': transforms.ToTensor,
@@ -298,9 +454,56 @@ def parse_transform(fname, *args):
                 args, kwargs = parse_layer_args(tfm_args)
                 transform_lst.append(TRANSFORMS[tfm_name](*args, **kwargs))
 
-    transform = transforms.Compose(transform_lst)
+    if transform_lst:
+        transform = transforms.Compose(transform_lst)
 
     return transform
+
+def to_latex(dirname, quant, table_format, key_err="err", is_vgg=False) :
+
+    if len(quant.columns.names) == 3:
+        quant_describe = quant.groupby(level=["stat", "set"], axis=1, group_keys=False).describe()
+        N_L = len(quant.columns.unique(level="layer")) # number of layers
+
+        split = N_L>=10
+        # if table_format == "wide":
+        table = quant_describe[["mean", "std", "min"]].transpose()
+        if is_vgg:
+            col_names=(N_L-10)*["0"] + ["conv1", "conv2", "conv3", "conv4", "conv5", "conv6", "conv7", "conv8", "fc1", "fc2"]
+            table.columns.set_levels(col_names, level="layer", inplace=True)
+        for stat in ["loss", key_err]:
+            tab = table[stat][["train", "test"]]
+            if split:
+                for dset in ["train", "test"]:
+                    tab = table[stat][dset]
+                    if table_format == "long":
+                        tab = tab.transpose()
+                    tab.to_latex(os.path.join(dirname, f'table_{stat}_{dset}.tex'), float_format="%.2f", na_rep='--')
+            else:
+                if table_format == "long":
+                    tab = tab.transpose()
+                tab.to_latex(os.path.join(dirname, f'table_{stat}.tex'), float_format="%.2f", na_rep='--')
+
+
+
+    if "experiment" in quant.columns.names:
+        quant_max_min = quant.min(axis=0).max(level=["experiment", "stat", "set"]).to_frame().transpose()
+        quant_max_min = quant_max_min.reindex(["A", "B"], axis=1, level="experiment")
+        quant_max_min = quant_max_min.reindex(["train", "test"], axis=1, level="set")
+        quant_max_min = quant_max_min.reindex(["loss", key_err], axis=1, level="stat")
+        quant_max_min.to_latex(os.path.join(dirname, f'table_sum.tex'), float_format="%.2f", na_rep='--')
+    return
+
+
+def assert_col_order(df, cols, id_vars=None, values="value"):
+    if id_vars is None:
+        id_vars=df.index.name
+    if df.columns.names != cols:
+        # the order is
+        # perform pivot
+        df = pd.melt(df.reset_index(), id_vars=id_vars).pivot(index=id_vars, columns=cols, values=values)
+    df.sort_index(axis=1, inplace=True)
+    return df
 
 def get_image_resize(transform):
     '''Return the image from the tranform if any'''
@@ -332,6 +535,7 @@ def parse_archi(fname, *args):
         'Linear': nn.Linear,
         'BatchNorm1d': nn.BatchNorm1d,
         'LeakyReLU': nn.LeakyReLU,
+        'MaxPool2d': nn.MaxPool2d,
         'ConvTranspose2d': nn.ConvTranspose2d,
         'Conv2d': nn.Conv2d,
         'BatchNorm2d': nn.BatchNorm2d,
@@ -370,7 +574,10 @@ def parse_archi(fname, *args):
                         nn_layers = []
                     elif module_type == 'Module List':
                         nn.module_type = nn.ModuleList
+                    #elif module_type == 'AdaptiveAveragePool2d':
+                        #nn.module_type =
                     else:
+
                         raise NotImplementedError(module_type)
 
                 depth += line.count("(")
@@ -754,6 +961,23 @@ def print_cuda_memory_usage(device, logs=sys.stdout, epoch=None):
     print(torch.cuda.memory_summary(device), file=logs, flush=True)
 
 
+
+def count_hidden_layers(model, act=nn.ReLU):
+
+    if hasattr(model, 'main'):
+        list_layer = model.main
+    elif isinstance(model, torchvision.models.vgg.VGG):
+        list_layer = list(model.features) + list(model.classifier)
+    elif isinstance(model, nn.DataParallel):
+        return count_hidden_layers(model.module, act)
+    else:
+        raise NotImplementedError
+
+
+    cnt = 0
+    for layer in list_layer:
+        cnt += isinstance(layer, act)
+    return cnt
 
 
 if __name__ == '__main__':
