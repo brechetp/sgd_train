@@ -342,10 +342,9 @@ if __name__ == '__main__':
 
 
 
-    DO_SANITY_CHECK = False  # check if the pre trained model separates the data
     stop = False
     separated = False
-    epoch = (start_epoch - 1) if DO_SANITY_CHECK else start_epoch
+    epoch =  start_epoch
     frozen = False
     ones = torch.ones(args.ndraw, device=device, dtype=dtype) if args.ndraw > 1 else torch.ones([])
 
