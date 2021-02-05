@@ -8,7 +8,8 @@ f=4
 name=fraction-4
 [ -z $max_run ] && max_run=1;
 #incr=1
-sbname="a-m-100"
+sbname="m-w-50-0"
+#sbname="a-m-100"
 fname="$dir/$sbname.sbatch"
 cp "$dir/$template" $fname
 exit_code=0
@@ -26,14 +27,15 @@ sed -i "s%^\(#SBATCH -e .*/\).*%\1/$sbname.err%" $fname
 
 
 #for L in 0 1;do 
-for W in `seq 100 100 500`; do
+for W in 50; do
+#for W in `seq 100 100 500`; do
     L=2
 #for W in `seq 50 50 300`;  do
 #for
-model="results/mnist/210127/L-2/w-$W/checkpoint.pth"
+#model="results/mnist/210127/L-2/w-$W/checkpoint.pth"
 #model="results/cifar10/210205/checkpoint.pth"
 #model="results/cifar10/210120/vgg-11/checkpoint.pth"
-    for el in `seq 0 2`; do
+    #for el in `seq 0 2`; do
     #for W in 100 700 1300; do
     #model="results/mnist/210127/L-2/w-$W/checkpoint.pth"
     #name="fraction-$f-try-20"
@@ -44,12 +46,12 @@ model="results/mnist/210127/L-2/w-$W/checkpoint.pth"
         #echo "#srun python annex_vgg.py --model $model --fraction $f --entry_layer $L --name $name --draws 20 -lrm manual -lr 0.1" -lrs 30 --nepochs 1000 >> $fname; 
         #echo "#srun python train_mnist.py --vary_name lr_mode depth width --width $W --depth $L --dataset $dataset" --lr_mode hessian  >> $fname
         #echo "#srun python eval_copy.py --model $model --optim_mult --name scalar-brent --steps 20"  >> $fname
-        #echo "#srun python train_fcn.py --vary_name depth width --width $W --depth $L --dataset $dataset -oroot results/mnist/210127/ -lrm hessian "  >> $fname
-        echo "#srun python check_seq.py --model $model --learning_rate 0.05 --entry_layer $el --name fraction-2 --fraction 2 --lr_step 30"  >> $fname
+        echo "#srun python train_fcn.py --vary_name depth width --width $W --depth $L --dataset $dataset -oroot results/mnist/210127/ -lrs 100 -lrm hessian "  >> $fname
+        #echo "#srun python check_seq.py --model $model --learning_rate 0.05 --entry_layer $el --name fraction-2 --fraction 2 --lr_step 30"  >> $fname
         #echo "#srun python check_seq.py --model $model --learning_rate 0.01 --entry_layer $el --name fraction-2 --fraction 2 --lr_step 30"  >> $fname
         #echo "#srun python eval_copy.py --model $model --optim_mult --steps 200 --name ds-200-f2"  >> $fname
     done;
-done;
+#done;
 #done;
 #for kr in `seq 0.1 0.1 0.5` 
 #for ns in square
