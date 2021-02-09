@@ -295,7 +295,7 @@ if __name__ == '__main__':
             logs = sys.stdout
 
 
-        classifier = models.classifiers.ClassifierVGGAnnex(model, F=fraction, idx_entry=args.entry_layer).to(device)
+        classifier = models.classifiers.AnnexVGG(model, F=fraction, idx_entry=args.entry_layer).to(device)
         classifier.features.requires_grad_(False)
         #learning_rate = min(args.max_learning_rate, rule_of_thumb, find_learning_rate(classifier, train_loader))
         #learning_rate = rule_of_thumb

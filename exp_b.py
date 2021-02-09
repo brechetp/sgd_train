@@ -315,7 +315,7 @@ if __name__ == '__main__':
                                                 feature_extract=False,
                                                 num_classes=NUM_CLASSES)
             model.n_layers = utils.count_hidden_layers(model)
-            PrunedClassifier = models.classifiers.ClassifierCopyVGG
+            PrunedClassifier = models.classifiers.PrunedCopyVGG
             args.normalized=True
 
 
@@ -323,7 +323,7 @@ if __name__ == '__main__':
             is_vgg=False
             archi = utils.parse_archi(log_fname)
             model = utils.construct_FCN(archi)
-            PrunedClassifier = models.classifiers.ClassifierCopyFCN
+            PrunedClassifier = models.classifiers.PrunedCopyFCN
 
 
         transform= utils.parse_transform(log_fname)
