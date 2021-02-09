@@ -7,11 +7,11 @@ WIDTH=245
 # the main script for learning the different dropout models
 
 #1. first learn the original model
-python train_fcn.py --dataset mnist --dataroot $DATAROOT -oroot $OUTROOT --name mnist-fcn --depth $DEPTH --width $WIDTH --nepoch 2
+#python train_fcn.py --dataset mnist --dataroot $DATAROOT -oroot $OUTROOT --name mnist-fcn --depth $DEPTH --width $WIDTH --nepoch 2
 
 
 #2. once done, train all the subnetworks on the task
-for el in `seq 0 $L`; do
+for el in `seq 0 $DEPTH`; do
     python exp_a_fcn.py --model $OUTROOT/mnist-fcn/checkpoint.pth  --nepoch 2 --fraction 2 --name A --ndraw 2 --entry_layer $el
 done
 

@@ -573,13 +573,13 @@ def cast(s):
 
         return val
 
-    is_tuple = len(s.split(',')) > 1 and s[0]=='('
+    is_tuple = len(s.split(',')) > 1 and s[0] == '('
     is_list = len(s.split(',')) > 1 and s[0] == '['
 
     if is_tuple:
-        val = tuple( cast_num(n.strip().lstrip('(').rstrip(')')) for n in s.split(',') if len(n) > 0)
+        val = tuple( cast_num(n.strip('()')) for n in s.split(',') if len(n.strip('()')) > 0)
     elif is_list:
-        val = list( cast_num(n.strip().lstrip('[').rstrip(']')) for n in s.split(',') if len(n) > 0)
+        val = list(cast_num(n.strip('[]')) for n in s.split(',') if len(n.strip('[]')) > 0)
     else:
         if s == 'True':
             val = True
@@ -598,27 +598,27 @@ def parse_layer_args(layer_args_string):
     kwargs = {}
     args = []
     for idx, c in enumerate(layer_args_string):
-        if  c == '(':
+        if  c == '(' or c == '[':
             d += 1
-        elif c == ')':
+        elif c == ')' or c == ']':
             d -= 1
-        else:
-            if idx == len(layer_args_string)-1:  # last character
-                buff.append(c)
-            if (d == 0 and c == ',') or idx == len(layer_args_string)-1:
-                # end of argument
-                buff = ''.join(buff).strip()
-                if key:
-                    kwargs[key] =  cast(buff)
-                else:
-                    args.append(cast(buff))
-                buff = []
-                key = ''
-            elif c == '=':
-                key = ''.join(buff).strip()
-                buff = []
+        # else:
+        if idx == len(layer_args_string)-1:  # last character
+            buff.append(c)
+        if (d == 0 and c == ',') or idx == len(layer_args_string)-1:
+            # end of argument
+            buff = ''.join(buff).strip()
+            if key:
+                kwargs[key] =  cast(buff)
             else:
-                buff.append(c)
+                args.append(cast(buff))
+            buff = []
+            key = ''
+        elif c == '=':
+            key = ''.join(buff).strip()
+            buff = []
+        else:
+            buff.append(c)
 
     return args, kwargs
 

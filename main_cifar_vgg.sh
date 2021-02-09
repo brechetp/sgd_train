@@ -2,15 +2,14 @@
 
 DATAROOT="data/"
 OUTROOT="results/"
-L=2
 # the main script for learning the different dropout models
 
 #1. first learn the original model
-python train_vgg.py --dataset cifar10 --dataroot $DATAROOT -oroot $OUTROOT --name cifar10-vgg --model vgg-11
+#python train_vgg.py --dataset cifar10 --dataroot $DATAROOT -oroot $OUTROOT --name cifar10-vgg --model vgg-11
 
 
 #2. once done, train all the subnetworks on the task
-for el in `seq 0 $L`; do
+for el in `seq 0 10`; do
     python exp_a_vgg.py --model $OUTROOT/cifar10-vgg/checkpoint.pth  --nepoch 2 --fraction 2 --name A --ndraw 2 --entry_layer $el
 done
 

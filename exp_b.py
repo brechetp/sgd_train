@@ -286,6 +286,7 @@ if __name__ == '__main__':
         log_model = os.path.join(os.path.dirname(m), 'logs.txt')
 
         path_output = os.path.join(root_model, args.name)
+        os.makedirs(path_output, exist_ok=True)
 
         if hasattr(args_model, 'model') and args_model.model.find('vgg') != -1:
             # VGG model
@@ -340,7 +341,6 @@ if __name__ == '__main__':
 
             # dataset = args.dataset
     keep = 1 - 1 / args.fraction
-    os.makedirs(path_output, exist_ok=True)
 
 #     logs = None
 

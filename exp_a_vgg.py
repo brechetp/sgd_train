@@ -417,7 +417,7 @@ if __name__ == '__main__':
             #print('ep {}, train loss (error) {:g} ({:g}), test loss (error) {:g} ({:g})'.format(
             print('try: {}, ep {}, loss (test): {:g} ({:g}), error (test): {:g} ({:g}) {}'.format(
                 id_draw, epoch, quant.loc[epoch, ('train', 'loss', id_draw)], quant.loc[epoch, ('test', 'loss', id_draw)],
-                err_train,  quant.loc[epoch, ('val', 'error', id_draw)], ' (separated)' if separated else ''),
+                err_train,  quant.loc[epoch, ('test', 'error', id_draw)], ' (separated)' if separated else ''),
                 file=logs, flush=True)
 
 
