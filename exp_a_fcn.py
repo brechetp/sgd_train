@@ -3,9 +3,7 @@ import numpy as np
 import pandas as pd
 import os
 import sys
-from torchsummary import summary
 import torch.nn as nn
-from collections import defaultdict
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -13,10 +11,8 @@ matplotlib.style.use('ggplot')
 import seaborn as sns
 sns.set_theme()
 
-import math
 
 import models
-import random
 
 import torch.optim
 import torch

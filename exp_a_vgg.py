@@ -3,9 +3,8 @@ import numpy as np
 import pandas as pd
 import os
 import sys
-from torchsummary import summary
 import torch.nn as nn
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -13,19 +12,15 @@ matplotlib.style.use('ggplot')
 import seaborn as sns
 sns.set_theme()
 
-import math
 
 import models
-import random
 
 import torch.optim
 import torch
 import argparse
 import utils
 
-from sklearn.linear_model import LogisticRegression
 
-#from torchvision import models, datasets, transforms
 
 try:
     from tqdm import tqdm

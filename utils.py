@@ -1,22 +1,17 @@
 import torchvision
 import torch
 import pandas as pd
-#from datasets.rsna import RSNADataset
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader, SubsetRandomSampler, SequentialSampler
-from torchvision.datasets import MNIST, CIFAR10, CIFAR100, SVHN, ImageNet
+from torch.utils.data import DataLoader, SubsetRandomSampler
+from torchvision.datasets import MNIST, CIFAR10,CIFAR100, SVHN, ImageNet
 import torchvision.datasets
 import torch.nn as nn
 from collections import OrderedDict
 from subprocess import Popen, PIPE
 import re
 import PIL
-import math
 import os
-import numpy as np
 import sys
-import argparse
-from os.path import join as join_path
 import models
 import datetime
 
@@ -58,7 +53,7 @@ def get_num_classes(dataset):
 
 
 def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=False,
-                normalize=False, tfm=None, shuffle=0):
+                normalize=False, tfm=None):
 
 
     num_chs = 1 if dataset.lower() in [ 'rsna', 'mnist' ] else 3
@@ -115,7 +110,7 @@ def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=False,
 
     elif dataset.lower() == 'mnist':
 
-        train_dataset = MNIST(dataroot, train=True, transform=transform, download=True, shuffle=False)
+        train_dataset = MNIST(dataroot, train=True, transform=transform, download=True)
         test_dataset = MNIST(dataroot, train=False, transform=transform, download=True)
 
 
@@ -624,16 +619,6 @@ def parse_layer_args(layer_args_string):
 
 
 
-
-def print_cuda_memory_usage(device, logs=sys.stdout, epoch=None):
-    '''The current usage of GPU memory'''
-
-
-
-    print(80*'*', file=logs, flush=True)
-    print(epoch, file=logs, flush=True)
-    print(80*'*', file=logs, flush=True)
-    print(torch.cuda.memory_summary(device), file=logs, flush=True)
 
 
 

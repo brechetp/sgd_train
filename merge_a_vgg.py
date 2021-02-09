@@ -3,9 +3,6 @@ import numpy as np
 import pandas as pd
 import os
 import sys
-from torchsummary import summary
-import torch.nn as nn
-from collections import defaultdict
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -16,19 +13,15 @@ sns.set(font_scale=3, rc={'text.usetex' : False})
 sns.set_theme()
 sns.set_style('whitegrid')
 import glob
-import re
 
-import math
 
 import models
-import random
 
 import torch.optim
 import torch
 import argparse
 import utils
 
-from sklearn.linear_model import LogisticRegression
 
 #from torchvision import models, datasets, transforms
 
@@ -38,16 +31,6 @@ except:
     def tqdm(x): return x
 
 
-def process_epochs(epochs, dirname):
-
-    fig = plt.figure()
-    columns = pd.Index(range(0, len(epochs)), name='layer')
-    df = pd.DataFrame(epochs, index=['epoch'], columns=columns)
-    df = df.melt()
-    s = df.plot(x='layer', y='value', kind='scatter', ylabel='epoch')
-    s.set(ylabel="epoch")
-    plt.savefig(fname=os.path.join(dirname, 'epochs.pdf'))
-    return
 
 def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=True):
 

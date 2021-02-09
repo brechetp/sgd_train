@@ -160,7 +160,6 @@ if __name__ == '__main__':
     #print('Layer dimensions'.format(linear_classifier.neurons), file=logs)
     print('Image dimension: {}'.format(imsize), file=logs)
 
-    #summary(model,  [imsize, (1,)])
     #model.apply(models.cnn.init_weights)
 
 

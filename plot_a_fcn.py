@@ -2,10 +2,6 @@ import torch
 import numpy as np
 import pandas as pd
 import os
-import sys
-from torchsummary import summary
-import torch.nn as nn
-from collections import defaultdict
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -15,17 +11,12 @@ sns.set_theme()
 import glob
 import re
 
-import math
 
-import models
-import random
 
 import torch.optim
 import torch
 import argparse
-import utils
 
-from sklearn.linear_model import LogisticRegression
 
 #from torchvision import models, datasets, transforms
 
@@ -33,55 +24,6 @@ try:
     from tqdm import tqdm
 except:
     def tqdm(x): return x
-
-
-def process_epochs(epochs, dirname):
-
-    fig = plt.figure()
-    columns = pd.Index(range(0, len(epochs)), name='layer')
-    df = pd.DataFrame(epochs, index=['epoch'], columns=columns)
-    df = df.melt()
-    s = df.plot(x='layer', y='value', kind='scatter', ylabel='epoch')
-    s.set(ylabel="epoch")
-    plt.savefig(fname=os.path.join(dirname, 'epochs.pdf'))
-    return
-
-def select_min(df):
-    """Select the test with the minimal error (usually 0)"""
-
-    Idx = pd.IndexSlice
-    df_min = None
-    n_layers = len(df.columns.levels[0])
-    #columns = df.columns.name
-    indices = np.zeros(n_layers, dtype=int)
-
-
-    for idx in range(n_layers):
-        # replace NaN with 0
-        val_min = df.loc[:, (idx, 'error')].min()
-        mask = df.loc[:, (idx, 'error')] == val_min
-        indices[idx] = df.loc[mask, (idx, 'loss')].idxmin()  # if several min, take the min of them
-        # the indices for the try that has the minimum training
-        # error at the epoch epoch
-
-    # remove the column index 'try'
-    cols = pd.MultiIndex.from_product(df.columns.levels, names=df.columns.names)  # all but the try
-    df_min = pd.DataFrame(columns=cols, index=[1])
-    df_min.index.name = 'step'
-
-    for idx in range(n_layers):
-        # select the try that has the minimum training error at the
-        # last epoch (at index indices[idx])
-        df_min.loc[1, Idx[idx, :]] = df.loc[indices[idx],Idx[idx, :]]#.droplevel('try', axis=1)
-    #df_min.loc[:, df_min.columns.get_level_values('layer') == 'last'] = df.xs(('last', idx_last), axis=1, level=[2, 3], drop_level=False).droplevel('try', axis=1)
-    #df_min.loc[:, df_min.columns.get_level_values('stat') == 'error'] *= 100
-    #df_min = df_min.loc[pd.IndexSlice[:, df_min.columns.get_level_values('layer').isin(range(1, n_layers+1))]]
-
-    #if not df.loc[epoch,  ('train', 'error', 1, indices[0] )] == 0:
-    #    print('Not separated!', dirname)
-    #else:
-    return df_min
-    #    print('Separated!', dirname)
 
 
 def process_df(quant, dirname, args=None, args_model=None, save=True):
@@ -155,23 +97,6 @@ def process_csv(file_csv):
     return
 
 
-def eval_test_set(checkpoint, fname, log_fname):
-    '''Eval the model on the test set'''
-    args = checkpoint['args']
-    quant = checkpoint['quant']
-    train_dataset, test_dataset, num_chs = utils.get_dataset(dataset=args.dataset,
-                                                        dataroot=args.dataroot,
-                                                                )
-
-    train_loader, size_train,\
-        val_loader, size_val,\
-        test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset, batch_size =args.batch_size, ss_factor=1, size_max=args.size_max, collate_fn=None, pin_memory=False)
-    classifier = utils.parse_archi(log_fname)
-    loss_test, err_test = eval_epoch(model, test_loader)
-    quant.columns.name = add_sets
-    quant.loc[epoch, ('test', 'loss')] = loss_test
-    quant.loc[epoch, ('test', 'error')] = err_test
-
 
 def process_subdir(subdir, device, N_L=5, N_T=20):
     # subdir will have different entry_n results, all with the same number of
@@ -207,9 +132,6 @@ def process_subdir(subdir, device, N_L=5, N_T=20):
             args = checkpoint['args']
         epoch = checkpoint['epochs']
         quant = checkpoint['quant']
-
-        if not 'set' in quant.columns.names:
-            checkpoint = eval_test_set(checkpoint, file_entry)
 
         df_bundle = pd.concat([df_bundle, quant], ignore_index=False, axis=1)
 
@@ -273,6 +195,5 @@ if __name__ == '__main__':
             pass
         df, epochs, args_entry = process_subdir(d, device)
         process_df(df, d, args_entry, args_model)
-        process_epochs(epochs, dirname=d)
 
 
