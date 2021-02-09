@@ -33,10 +33,10 @@ if __name__ == '__main__':
     parser.add_argument('--lr_step', '-lrs', type=int, default=0, help='the step for the learning rate scheduler')
     parser.add_argument('--lr_gamma', '-lrg', type=float, default=0.5, help='the step for the learning rate scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
-    parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
+    parser.add_argument('--nepoch', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
-    parser.add_argument('--output_root', '-o', help='the root path for the outputs')
+    parser.add_argument('--output_root', '-oroot', help='the root path for the outputs')
     parser.add_argument('--vary_name', nargs='*', default=None, help='the name of the parameter to vary in the name (appended)')
     #parser.add_argument('--keep_ratio', type=float, default=0.5, help='The ratio of neurons to keep')
     parser_model = parser.add_mutually_exclusive_group(required=True)
@@ -137,13 +137,11 @@ if __name__ == '__main__':
     train_dataset, test_dataset, num_chs = utils.get_dataset(dataset=args.dataset,
                                                           dataroot=args.dataroot,
                                                                             normalize=True,
-                                                                            # augment=args.augment,
-                                                             #imresize =imresize,
                                                              )
     train_loader, size_train,\
         test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset,
                                                        batch_size =args.batch_size, num_workers=4,
-                                                       size_max=args.size_max, collate_fn=None, pin_memory=True)
+                                                       collate_fn=None, pin_memory=True)
 
     #model = models.cnn.CNN(1)
 
@@ -183,7 +181,7 @@ if __name__ == '__main__':
                 lr=args.learning_rate[0], momentum=args.momentum, nesterov=True, weight_decay=args.weight_decay)
 
     #lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lrs_gamma)  # reduces the learning rate by half every 20 epochs
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_gamma)  # reduces the learning rate by half every 20 epochs
     #lr_scheduler = None
 
     print("Model: {}".format(model), file=logs, flush=True)
@@ -203,12 +201,12 @@ if __name__ == '__main__':
     start_epoch = checkpoint.get('epochs', 0)
 
     names=['set', 'stat']
-    #tries = np.arange(args.ntry)
+    #tries = np.arange(args.ndraw)
     sets = ['train', 'test']
-    stats = ['loss', 'err']
+    stats = ['loss', 'error']
     #layers = ['last', 'hidden']
     columns=pd.MultiIndex.from_product([sets, stats], names=names)
-    index = pd.Index(np.arange(1, args.nepochs+start_epoch), name='epoch')
+    index = pd.Index(np.arange(1, args.nepoch+start_epoch), name='epoch')
     quant = pd.DataFrame(columns=columns, index=index, dtype=float)
 
 
@@ -223,7 +221,7 @@ if __name__ == '__main__':
         ''' x: BxC
         targets: Bx1
 
-        returns: err of dim 0
+        returns: error of dim 0
         '''
         return  (x.argmax(dim=1)!=targets).float().mean(dim=0)
 
@@ -286,8 +284,8 @@ if __name__ == '__main__':
                 y = y.to(device)
                 out_class = model(x)  # BxC,  # each output for each layer
                 loss = ce_loss(out_class, y)  # LxTxB
-                err = zero_one_loss(out_class, y)  # T
-                err_mean = (idx * err_mean + err.detach().cpu().numpy()) / (idx+1)  # mean error
+                error = zero_one_loss(out_class, y)  # T
+                err_mean = (idx * err_mean + error.detach().cpu().numpy()) / (idx+1)  # mean error
                 loss_mean = (idx * loss_mean + loss.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean loss
                 # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
                 #break
@@ -302,8 +300,8 @@ if __name__ == '__main__':
 
         loss_train =  0
         err_train = 0
-        #loss_hidden_tot = np.zeros(args.ntry)  # for the
-        #ones = torch.ones(args.ntry, device=device, dtype=dtype)
+        #loss_hidden_tot = np.zeros(args.ndraw)  # for the
+        #ones = torch.ones(args.ndraw, device=device, dtype=dtype)
 
         for idx, (x, y) in enumerate(train_loader):
 
@@ -318,8 +316,8 @@ if __name__ == '__main__':
             loss = ce_loss(out, y).mean()  # TxB
 
             loss_train = (idx * loss_train + loss.detach().cpu().numpy()) / (idx+1)
-            err = zero_one_loss(out,y)
-            err_train = (idx * err_train + err.detach().cpu().numpy() )/ (idx+1)
+            error = zero_one_loss(out,y)
+            err_train = (idx * err_train + error.detach().cpu().numpy() )/ (idx+1)
             if not frozen:
                 loss.backward()
                 optimizer.step()
@@ -333,10 +331,10 @@ if __name__ == '__main__':
         epoch += 1 if not frozen else 0
 
 
-        quant.loc[epoch, ('train', 'err')] = err_train
+        quant.loc[epoch, ('train', 'error')] = err_train
         quant.loc[epoch, ('train', 'loss')] = loss_train
 
-        quant.loc[epoch, ('test', 'err')] = err_test
+        quant.loc[epoch, ('test', 'error')] = err_test
         quant.loc[epoch, ('test', 'loss')] = loss_test
 
         separated =  frozen and err_train == 0
@@ -348,13 +346,13 @@ if __name__ == '__main__':
 
 
         stop = ( separated
-                or epoch > start_epoch + args.nepochs)
+                or epoch > start_epoch + args.nepoch)
 
 
 
-        print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
-            epoch, quant.loc[epoch, ('train', 'loss')], quant.loc[epoch, ('train', 'err')],
-            quant.loc[epoch, ('test', 'loss')], quant.loc[epoch, ('test', 'err')]),
+        print('ep {}, train loss (error) {:g} ({:g}), test loss (error) {:g} ({:g})'.format(
+            epoch, quant.loc[epoch, ('train', 'loss')], quant.loc[epoch, ('train', 'error')],
+            quant.loc[epoch, ('test', 'loss')], quant.loc[epoch, ('test', 'error')]),
             file=logs, flush=True)
 
         if args.lr_step>0:

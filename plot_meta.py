@@ -20,8 +20,6 @@ sns.set(
         'lines.linewidth': 3
     }
 )
-# sns.set_theme()
-# sns.set_style('whitegrid')
 import glob
 import copy
 
@@ -34,15 +32,6 @@ import torch.optim
 import torch
 import argparse
 import utils
-
-from sklearn.linear_model import LogisticRegression
-
-#from torchvision import models, datasets, transforms
-
-try:
-    from tqdm import tqdm
-except:
-    def tqdm(x): return x
 
 def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=True):
 
@@ -71,21 +60,10 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
     quant.sort_index(axis=1, inplace=True)
     quant.loc[:, cols_error] *= 100  # in %
     quant.groupby(level=["experiment", "stat", "set"], axis=1, group_keys=False).describe().to_csv(os.path.join(output_root, 'describe.csv'))
-    #csvlosses.to_csv(os.path.join(output_root, 'losses.csv'))
-    #errors.to_csv(os.path.join(output_root, 'errors.csv'))
-
-    #quant_describe = pd.DataFrame(group.describe().rename(columns={'value': name}).squeeze()
-    #                              for (name, group) in quant.groupby(level=["stat", "set"], axis=1))
-    #quant_describe.to_csv(os.path.join(output_root, 'describe.csv'))
-
 
     df_reset = quant.reset_index()
     df_plot = pd.melt(df_reset, id_vars='draw')#.query("layer>0")
     # df_plot_no_0 = df_plot.query('layer>0')
-    # df_plot_0 = df_plot.query('layer==0')
-    #relative quantities
-    # quant_ref = quant.loc[1, Idx[:, :, 0, :]]  # for all the  widths
-    # N_S = len(quant_ref)
     quant_ref = None
     if stats_ref is not None:
         N_S = len(stats_ref)
@@ -103,56 +81,10 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
             utils.to_latex(output_root, (quant-quant_ref_merge.value.values).abs(), table_format, key_err="error")
         except:
             pass
-    # quant_rel = (quant.loc[:, Idx[:, :, 1:]] - quant_ref_val).abs()
-    #quant_plus = quant.loc[:, Idx[:, :, 1:]] + quant_ref + 1e-10
-    #quant_rel /= quant_plus
-    #quant_rel *= 2
-
-    # utils.to_latex(output_root, quant.loc[:, Idx[:, :, 1:]], table_format, key_err="error")
-    # utils.to_latex(output_root, quant, table_format, key_err="error")
-
-    # df_reset_rel = quant_rel.reset_index()
-    # df_plot_rel = pd.melt(df_reset_rel, id_vars="draw")
-
-
-
-    # rp = sns.relplot(
-        # #data=rel_losses.min(axis=0).to_frame(name="loss"),
-        # # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="steps", columns=col_order).min(axis=0).to_frame(name="value"),
-        # data=df_plot.pivot(index="draw", columns=col_names).min(axis=0).to_frame(name="value"),
-        # #hue="width",
-        # hue="experiment",
-        # hue_order=["A", "B"],
-        # col="stat",
-        # col_order=["loss", "error"],
-        # # col_wrap=3,
-        # row="set",
-        # row_order=["train", "test"],
-        # x="layer",
-        # y="value",
-        # kind='line',
-        # legend="full",
-        # # style='set',
-        # ci='sd',
-        # palette=palette,
-        # #style='layer',
-        # markers=False,
-        # dashes=True,
-        # #legend_out=True,
-        # facet_kws={
-            # 'sharey': False,
-            # 'sharex': True
-        # }
-        # #y="value",
-    # )
 
     is_vgg = 'vgg' in dirname
     dataset = 'CIFAR10' if 'cifar' in dirname else 'MNIST'
     # if args_model is not None:
-
-    # if is_vgg:
-        # xlabels=["0", "conv1", "conv2", "conv3", "conv4", "conv5", "conv6", "conv7", "conv8", "fc1", "fc2"]
-    # else:
     xlabels=[str(i) for i in range(N_L)]
 
     palette=sns.color_palette(n_colors=len(keys))  # the two experiments
@@ -176,7 +108,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
             df_plot = quant.loc[:, Idx[:, stat, setn, :]].min(axis=0).to_frame(name="value")
             lp = sns.lineplot(
                 #data=rel_losses.min(axis=0).to_frame(name="loss"),
-                # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="steps", columns=col_order).min(axis=0).to_frame(name="value"),
+                # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="draw", columns=col_order).min(axis=0).to_frame(name="value"),
                 data=df_plot,
                 #hue="width",
                 hue="experiment",
@@ -216,24 +148,6 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
                 # data_ref  = quant_ref[stat, setn].reset_index()
 
                 ax.axline((0,quant_ref[stat, setn][0]), slope=0, ls=":", zorder=2, c='g')
-                # data_ref.index = pd.Index(range(len(data_ref)))
-                # sns.lineplot(
-                    # data=data_ref,  # repeat the datasaet N_L times
-                    # ax=ax,
-                    # # x=range(len(data_ref)),
-                    # # y="value",
-                    # # xc np.tile(np.linspace(1, N_L, num=N_L), 2),
-                    # # x='',
-                    # # hue='r',
-                    # # color='red',
-                    # palette=['red'],
-                    # # style='set',
-                    # # x='index',
-                    # # dashes=True,
-                    # legend=False,
-                    # # y="value"
-                # )
-
                 # for ax in ax.lines[-1:]:  # the last two
                     # ax.set_linestyle('--')
             k += 1
@@ -264,7 +178,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
             df_plot = quant.loc[:, Idx[:, stat, setn, :]].min(axis=0).to_frame(name="value")
             lp = sns.lineplot(
                 #data=rel_losses.min(axis=0).to_frame(name="loss"),
-                # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="steps", columns=col_order).min(axis=0).to_frame(name="value"),
+                # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="draw", columns=col_order).min(axis=0).to_frame(name="value"),
                 data=df_plot,
                 #hue="width",
                 hue="experiment",
@@ -297,31 +211,10 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
                 # data_ref  = quant_ref[stat, setn].reset_index()
 
                 ax.axline((0,quant_ref[stat, setn][0]), slope=0, ls=":", zorder=2, c='g')
-                # data_ref.index = pd.Index(range(len(data_ref)))
-                # sns.lineplot(
-                    # data=data_ref,  # repeat the datasaet N_L times
-                    # ax=ax,
-                    # # x=range(len(data_ref)),
-                    # # y="value",
-                    # # xc np.tile(np.linspace(1, N_L, num=N_L), 2),
-                    # # x='',
-                    # # hue='r',
-                    # # color='red',
-                    # palette=['red'],
-                    # # style='set',
-                    # # x='index',
-                    # # dashes=True,
-                    # legend=False,
-                    # # y="value"
-                # )
 
-                # for ax in ax.lines[-1:]:  # the last two
-                    # ax.set_linestyle('--')
             k += 1
 
 
-    # fig.subplots_adjust(top=0.85)
-    # if is_vgg:
     labels=keys + ["Ref."]
     fig.legend(handles=ax.lines, labels=keys, title="Exp.", loc="upper right", bbox_to_anchor=(0.9,0.9),borderaxespad=0)#, bbox_transform=fig.transFigure)
     plt.margins()
@@ -344,18 +237,6 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
         col_order=["loss", "error"],
         row="set",
         row_order=["train", "test"],
-        # x="layer",
-        # y="value",
-        # kind='line',
-        # legend="full",
-        # style='set',
-        # ci='sd',
-        # palette=palette,
-        #style='layer',
-        # markers=False,
-        # dashes=True,
-        #legend_out=True,
-        # facet_kws={
         sharey= False,
         sharex= True,
         #y="value",
@@ -384,34 +265,6 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
 
     plt.close('all')
                 # ylabel = stat if stat == "loss" else "error (%)"
-                # cp.axes[j,i].set_ylabel(ylabel)
-                # cp.axes[j,i].set_xlabel("layer index l")
-
-                # df_cut_plot = pd.melt(df_cut_min.query(f'stat=="{stat}" & set=="{setn}"'))
-                # if quant_ref is not None:
-                    # data_ref  = quant_ref[stat, setn].reset_index()
-
-                    # data_ref.index = pd.Index(range(len(data_ref)))
-                # sns.lineplot(
-                    # data=df_cut_plot,  repeat the datasaet N_L times
-                    # ax=cp.axes[j,i],
-                    # x=range(len(data_ref)),
-                    # y="value",
-                    # xc np.tile(np.linspace(1, N_L, num=N_L), 2),
-                    # x='layer',
-                    # hue='r',
-                    # color='red',
-                    # palette=['red'],
-                    # style='set',
-                    # x='index',
-                    # dashes=True,
-                    # legend=False,
-                    # y="value"
-                # )
-
-                # for ax in cp.axes[j,i].lines[-1:]:  the last two
-                    # ax.set_linestyle(styles[i_k])
-
 
 
 
@@ -469,15 +322,6 @@ if __name__ == '__main__':
                 experiment = get_parent(f)
                 if not experiment in args.experiments:
                     continue
-                # try:
-                    # f_model = torch.load(os.path.join(os.path.dirname(f), "checkpoint.pth"), map_location=device)
-                # except IOError as e:
-                    # print(f"error {e} for {f}")
-                    # f_model = None
-                # if f_model:
-                    # chkpt_model =torch.load(f_model, map_location=device)
-                    # # args_chkpt  = chkpt['args']
-                    # args_model = chkpt_model['args']
 
                 Idx = pd.IndexSlice
 
@@ -489,12 +333,6 @@ if __name__ == '__main__':
                 if quant.columns.get_level_values(layer_idx).dtype != int:  # 0 are the layers
                     new_layer_lvl = list(map(int, quant.columns.get_level_values(layer_idx)))
                     levels = [quant.columns.get_level_values(i) if i != layer_idx else new_layer_lvl for i in range(nlevels)]
-                    cols = pd.MultiIndex.from_arrays(levels, names=quant.columns.names)
-                    quant.columns = cols
-                if "err" in quant.columns.get_level_values("stat"):
-                    new_stat_lvl = [s.replace("err", "error") for s in quant.columns.get_level_values(stat_idx)]
-                    # new_stat.sort()
-                    levels = [quant.columns.get_level_values(i) if i != stat_idx else new_stat_lvl for i in range(nlevels)]
                     cols = pd.MultiIndex.from_arrays(levels, names=quant.columns.names)
                     quant.columns = cols
 
@@ -509,14 +347,8 @@ if __name__ == '__main__':
                 quant.columns = pd.MultiIndex.from_product(levels,
                                                         names= ['experiment'] + quant.columns.names,
                                                         )
-                # quant.columns = pd.MultiIndex.from_arrays([quant.columns.get_level_values(1), quant.columns.get_level_values(0), level_width],
-                                                        # quant.columns.names[::-1] + ['width'],
-                                                        # )
 
                 df_bundle = pd.concat([df_bundle, quant], ignore_index=False, axis=1)
-                #df_bundle.loc[:, (log_mult, layers, 'loss')] = quant.xs('loss', level=1, axis=1)
-                #df_bundle.loc[Idx[:, (log_mult, layers, 'error')]] = quant.xs('error', level=1, axis=1)
-                #epochs[idx_entry] = epoch
 
 
             df_bundle.sort_index(axis=1, inplace=True)

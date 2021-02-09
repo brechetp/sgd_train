@@ -204,310 +204,40 @@ class PrunedCopyVGG(nn.Module):
         x = self.forward_no_mult(x)
         return self.mult*x
 
+class MultiLinear(nn.Module):
+    '''Define a parallel linear layer'''
 
-class DropoutFCN(nn.Module):
-    '''The classifiers from a copy of a trained FCN network'''
 
-    def __init__(self, model: FCN, keep_ratio=1/2):
-        """start_idx is the index for the first hidden layer to be modified"""
+    def __init__(self, in_features, out_features, num_tries=10):
 
         super().__init__()
 
-        # the indices for the hidden layers
-        #size_out = [layer.out_features for layer in model.main[:-1] if isinstance(layer, nn.Linear)]
+        weight = torch.empty((num_tries, in_features, out_features))
+        bias = torch.empty((num_tries, 1, out_features))
 
+        init_kaiming(weight, bias)
 
-
-        self.size_out = []
-        self.keep_ratio=keep_ratio
-        self.network = copy.deepcopy(model.main)
-        self.n_layers = L = len(list(filter(lambda x: isinstance(x, nn.ReLU), self.network)))
-
-        self._idx_layer = L
-        self.lookup_layer = [idx for (idx, layer) in enumerate(self.network) if isinstance(layer, nn.Linear)]
-
-        self.selected=[]
-        self.layer_from, self.layer_to =self.layers_from_to()
-
-
-
-    @property
-    def n_classes(self):
-        return self.get_layer(-1).out_features
-
-    @property
-    def mult(self):
-        # the multiplicative scalar
-        return self._mult
-
-    @mult.setter
-    def mult(self, mult):
-        self._mult = mult
-
-    @property
-    def idx_from(self):
-        return self.lookup_layer[self._idx_layer-1]
-
-    @property
-    def idx_to(self):
-        return self.lookup_layer[self._idx_layer]
-
-    @property
-    def idx_layer(self):
-        return self._idx_layer
-
-    def get_layer(self, idx=None):
-        # the index in terms of nn.Sequential of the hidden layer
-        if idx is None:
-            idx = self._idx_layer-1  # default take the one before the idx
-        return self.network[self.lookup_layer[idx]]
-
-    def layers_from_to(self):
-        return copy.deepcopy(self.get_layer(self._idx_layer-1)), copy.deepcopy(self.get_layer(self._idx_layer))
-
-
-
-    def new_sample(self, select=None):
-        # performs a new sample of the current working layer
-
-        M = self.layer_from.out_features
-        nin_from, nout_to = self.layer_from.in_features, self.layer_to.out_features
-        K = round(self.keep_ratio * M)
-        if select is None:
-            select = torch.randperm(M)[:K].sort().values
-            self.selected.append(select)  # keep track of the selected neurons
-        weights_from =(self.layer_from.weight[select, :])
-        weights_to = (self.layer_to.weight[:, select])
-        new_layer_from = nn.Linear(nin_from, K)
-        new_layer_to = nn.Linear(K, nout_to)
-        new_layer_from.weight = nn.Parameter(weights_from)
-        new_layer_to.weight = nn.Parameter(weights_to)
-        if self.layer_from.bias is not None:
-            selected_bias = (self.layer_from.bias[select])
-            new_layer_from.bias = nn.Parameter(selected_bias, requires_grad=False)
-
-        self.network[self.idx_from] = new_layer_from
-        self.network[self.idx_to] = new_layer_to
-        # switch the previously selected rows as columns now
-
-
-
-    def confirm_sample(self, idx):
-        # selects the current or given permutation as best sampling of units
-        # index at which operate (in relu): self.idx_sample
-
-        select = self.selected[idx]
-        self.new_sample(select)
-        self._idx_layer -= 1
-        l = self._idx_layer
-        self.layer_from, self.layer_to = self.layers_from_to()
-
-    def forward_no_mult(self, x):
-        x = torch.flatten(x, 1)
-        x = self.network(x)
-        return x
+        # size of weight: TxNxD
+        self.weight = nn.Parameter(weight)
+        self.bias = nn.Parameter(bias)
+        self.num_tries = num_tries
+        self.in_features = in_features
+        self.out_features = out_features
 
     def forward(self, x):
+        ''' Parallel matrix multiplication '''
+        # size of x: TxBxN
+        # weight of size: TxNxD
 
-        x = self.forward_no_mult(x)
-        x = self.mult*x
-        return x
+        out_matmul = x.matmul(self.weight) + self.bias
+        # output of size TxBxD
 
-class DropoutVGG(nn.Module):
-    '''The classifiers from a copy of a trained FCN network'''
-
-    def __init__(self, model, keep_ratio=1/2):
-        """start_idx is the index for the first hidden layer to be modified"""
-
-        super().__init__()
-
-        # the indices for the hidden layers
-        #size_out = [layer.out_features for layer in model.main[:-1] if isinstance(layer, nn.Linear)]
+        return out_matmul
 
 
+    def extra_repr(self):
 
-        self.size_out = []
-        self.keep_ratio=keep_ratio
-        self.features = copy.deepcopy(model.features)
-        self.classifier = copy.deepcopy(model.classifier)
-        self.avgpool = copy.deepcopy(model.avgpool)
-
-        self.n_layers = L = len(list(filter(lambda x: isinstance(x, nn.ReLU), list(self.features) + list(self.classifier))))
-
-        self._idx_layer = L
-        self.lookup_feat = [idx for (idx, layer) in enumerate(self.features) if isinstance(layer, nn.Conv2d)]
-        self.lookup_class = [idx for (idx, layer) in enumerate(self.classifier) if isinstance(layer, nn.Linear)]
-
-        self.n_layers_feat = L_feat = len(self.lookup_feat)
-        self.n_layers_class = L_class = len(self.lookup_class)
-
-        self.selected=[]
-        self.layer_from, self.layer_to = self.layers_from_to()
-        self.type_from, self.type_to = self.types_from_to()
-        self.n_classes = self.classifier[-1].out_features
-
-
-
-
-    @property
-    def mult(self):
-        # the multiplicative scalar
-        return self._mult
-
-    @mult.setter
-    def mult(self, mult):
-        self._mult = mult
-
-    def lookup_layer(self, idx):
-        # idx can be targeting a conv or lin layer
-        if self.get_type(idx) == "feat":
-            return self.lookup_feat[idx]
-        else:
-            if idx >=0:
-                return self.lookup_class[idx-self.n_layers_feat]
-            else: # -1 ...
-                return self.lookup_class[idx]
-
-    @property
-    def idx_from(self):
-        return self.lookup_layer(self._idx_layer-1)
-
-    @property
-    def idx_to(self):
-        return self.lookup_layer(self._idx_layer)
-
-    @property
-    def idx_layer(self):
-        return self._idx_layer
-
-
-    def get_layer(self, idx=None):
-        # the index in terms of nn.Sequential of the hidden layer
-        if idx is None:
-            idx = self._idx_layer  # default take the one before the idx
-        idx_seq = self.lookup_layer(idx)
-        layer= self.features[idx_seq] if self.get_type(idx)=='feat' else self.classifier[idx_seq]
-        return layer
-
-    def get_type(self, idx=None):
-        # the type (feat or class) of the layer at idx
-        if idx is None:
-            idx = self._idx_layer-1  # default take the one before the idx
-        if  0<=idx < self.n_layers_feat:
-            return 'feat'
-        else:
-            return 'class'
-
-    def layers_from_to(self):
-        return copy.deepcopy(self.get_layer(self._idx_layer-1)), copy.deepcopy(self.get_layer(self._idx_layer))
-
-    def types_from_to(self):
-        return self.get_type(self._idx_layer-1), self.get_type(self._idx_layer)
-
-    def new_sample(self, select=None):
-        # performs a new sample of the current working layer
-
-        if self.type_from == self.type_to == "class":
-            M = self.layer_from.out_features
-            nin_from, nout_to = self.layer_from.in_features, self.layer_to.out_features
-            K = round(self.keep_ratio * M)
-            if select is None:
-                select = torch.randperm(M)[:K].sort().values
-                self.selected.append(select)  # keep track of the selected neurons
-            weights_from =(self.layer_from.weight[select, :])
-            weights_to = (self.layer_to.weight[:, select])
-            new_layer_from = nn.Linear(nin_from, K, bias=(not self.layer_to.bias is None))
-            new_layer_to = nn.Linear(K, nout_to, bias=(not self.layer_from.bias is None))
-            new_layer_from.weight = nn.Parameter(weights_from)
-            new_layer_to.weight = nn.Parameter(weights_to)
-            if self.layer_from.bias is not None:
-                selected_bias = (self.layer_from.bias[select])
-                new_layer_from.bias = nn.Parameter(selected_bias, requires_grad=False)
-
-            self.classifier[self.idx_from] = new_layer_from
-            self.classifier[self.idx_to] = new_layer_to
-
-        elif self.type_from == self.type_to == "feat":
-        # switch the previously selected rows as columns now
-            M = self.layer_from.out_channels
-            nin_from, nout_to = self.layer_from.in_channels, self.layer_to.out_channels
-            K = round(self.keep_ratio * M)
-            if select is None:
-                select = torch.randperm(M)[:K].sort().values
-                self.selected.append(select)  # keep track of the selected neurons
-            weights_from =(self.layer_from.weight[select, :, :, :])
-            weights_to = (self.layer_to.weight[:, select, :, :])
-            new_layer_from = nn.Conv2d(in_channels=nin_from, out_channels=K,kernel_size=self.layer_from.kernel_size,
-                                           stride=self.layer_from.stride, padding=self.layer_from.padding, dilation=self.layer_from.dilation,
-                                           groups=self.layer_from.groups, bias=(not self.layer_from.bias is None), padding_mode=self.layer_from.padding_mode)  # the actual new parameter
-            new_layer_to = nn.Conv2d(in_channels=K, out_channels=nout_to, kernel_size=self.layer_to.kernel_size,
-                                           stride=self.layer_to.stride, padding=self.layer_to.padding, dilation=self.layer_to.dilation,
-                                           groups=self.layer_to.groups, bias=(not self.layer_to.bias is None), padding_mode=self.layer_to.padding_mode)  # the actual new parameter
-            new_layer_from.weight = nn.Parameter(weights_from)
-            new_layer_to.weight = nn.Parameter(weights_to)
-            if self.layer_from.bias is not None:
-                selected_bias = (self.layer_from.bias[select])
-                new_layer_from.bias = nn.Parameter(selected_bias, requires_grad=False)
-
-            self.features[self.idx_from] = new_layer_from
-            self.features[self.idx_to] = new_layer_to
-
-        elif self.type_from == "feat" and self.type_to == "class":
-            # has to bridge between the two
-            M = self.layer_from.out_channels
-            nin_from, nout_to = self.layer_from.in_channels, self.layer_to.out_features
-            K = round(self.keep_ratio * M)
-            if select is None:
-                select = torch.randperm(M)[:K].sort().values
-                self.selected.append(select)  # keep track of the selected neurons
-            size_pool = self.avgpool.output_size
-            offset = size_pool[0]*size_pool[1]
-            select_lin = select.view(-1, 1, 1)*offset + torch.arange(0, offset, dtype=torch.long).view(1, *size_pool)
-            select_lin = torch.flatten(select_lin)
-            weights_from =(self.layer_from.weight[select, :, :, :])
-            weights_to = (self.layer_to.weight[:, select_lin])
-            new_layer_from = nn.Conv2d(in_channels=nin_from, out_channels=K,kernel_size=self.layer_from.kernel_size,
-                                           stride=self.layer_from.stride, padding=self.layer_from.padding, dilation=self.layer_from.dilation,
-                                           groups=self.layer_from.groups, bias=(not self.layer_from.bias is None), padding_mode=self.layer_from.padding_mode)  # the actual new parameter
-            new_layer_to = nn.Linear(len(select_lin), nout_to, bias=(not self.layer_from.bias is None))
-            new_layer_from.weight = nn.Parameter(weights_from)
-            new_layer_to.weight = nn.Parameter(weights_to)
-            if self.layer_from.bias is not None:
-                selected_bias = (self.layer_from.bias[select])
-                new_layer_from.bias = nn.Parameter(selected_bias, requires_grad=False)
-
-            self.features[self.idx_from] = new_layer_from
-            self.classifier[self.idx_to] = new_layer_to
-
-        else:
-            raise NotImplementedError
-
-    def confirm_sample(self, idx):
-        # selects the current or given permutation as best sampling of units
-        # index at which operate (in relu): self.idx_sample
-
-        select = self.selected[idx]
-        self.new_sample(select)
-        self._idx_layer -= 1
-        self.layer_from, self.layer_to = self.layers_from_to()
-        self.type_from, self.type_to = self.types_from_to()
-
-    def forward_no_mult(self, x):
-        """Forward for the copied networks"""
-
-        # go through the different layers inside main
-        x = self.features(x)
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.classifier(x)
-
-        return x
-
-    def forward(self, x, no_mult=False):
-        """Forward for the copied networks"""
-
-        x = self.forward_no_mult(x)
-        return self.mult*x
+        return "in_features={}, out_features={}, num_tries={}".format(self.in_features, self.out_features, self.num_tries)
 
 
 
@@ -936,19 +666,9 @@ class LinearParallelMasked(nn.Module):
 
 
 
-def FCNHelper(num_layers, input_dim, num_classes, min_width, max_width=None,
-              shape='linear', first_layer=None, last_layer=None):
+def FCNHelper(num_layers, input_dim, num_classes, width):
 
-    if shape == 'linear':
-        max_width = 2*min_width
-        widths = list(np.linspace(max_width, min_width, num_layers, dtype=int))  # need three steps
-    elif shape == 'square':
-        widths = num_layers * [min_width]
-
-    if last_layer is not None:
-        widths[-1] = last_layer
-    if first_layer is not None:
-        widths[0] = first_layer
+    widths = num_layers * [width]
 
     return FCN(input_dim, num_classes, widths)
 

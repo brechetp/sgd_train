@@ -235,16 +235,7 @@ if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
 
     parser = argparse.ArgumentParser('Evaluating a copy of a classifier with removed units')
-    parser.add_argument('--output_root', '-o', type=str, help='output root for the results')
-    parser.add_argument('--name', default='eval-copy', type=str, help='the name of the experiment')
-    parser.add_argument('--vary_name', nargs='*', default=['depth', 'width'], help='the name of the parameter to vary in the name (appended)')
-    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-3, help='leraning rate')
-    parser.add_argument('--lr_update', type=int, default=0, help='update for the learning rate in epochs')
-    parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
-    parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
-    parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
-    parser.add_argument('--debug', action='store_true', help='debug')
-    parser.add_argument('-R', '--remove', type=int, default=100, help='the number of neurons to remove at each layer')
+    parser.add_argument('--name', default='B', type=str, help='the name of the experiment')
     parser_model = parser.add_mutually_exclusive_group(required=True)
     parser_model.add_argument('--model', nargs='*', help='path of the model to separate')
     parser_model.add_argument('--root_model', nargs='*', help='path of the model to separate')
@@ -252,16 +243,10 @@ if __name__ == '__main__':
     parser_normalized.add_argument('--normalized', action='store_true', dest='normalized',  help='normalized the input')
     parser_normalized.add_argument('--no-normalized', action='store_false', dest='normalized', help='normalized the input')
     parser.set_defaults(normalized=False)
-    #parser_model.add_argument('--model_directory', help='root of the models to separate (same plot)')
-    parser.add_argument('--reset_random', action='store_true', help='randomly reset the model')
-    parser.add_argument('--gd_mode', '-gdm', default='stochastic', choices=['full', 'stochastic'], help='whether the gradient is computed full batch or stochastically')
     parser_device = parser.add_mutually_exclusive_group()
     parser_device.add_argument('--cpu', action='store_true', dest='cpu', help='force the cpu model')
     parser_device.add_argument('--cuda', action='store_false', dest='cpu')
-    parser.add_argument('--depth', type=int, help='the depth for init network')
-    #parser.add_argument('--end_layer', type=int, help='if set the maximum layer for which to compute the separation (forward indexing)')
     parser.add_argument('--ndraw', type=int, default=20, help='The number of ndraw to take')
-    parser.add_argument('--optim_mult', action="store_true", default=True, help="flag to search for best multiplication factor")
     parser.add_argument('--table_format', choices=["wide", "long"], default="long")
     parser.add_argument('--fraction', '-F', default=2, type=int, help='the removed neurons denominator')
     parser.set_defaults(cpu=False)
@@ -298,12 +283,8 @@ if __name__ == '__main__':
             print('Error loading the model at {}'.format(e))
         args_model = checkpoint_model['args']  # restore the previous arguments
         #imresize = checkpoint_model.get('imresize', None)
-        log_fname = os.path.join(os.path.dirname(m), 'logs.txt')
+        log_model = os.path.join(os.path.dirname(m), 'logs.txt')
 
-        if args.reset_random:
-            args.name += '_reset'
-        if args.optim_mult:
-            args.name += '_optim-mult'
         path_output = os.path.join(root_model, args.name)
 
         if hasattr(args_model, 'model') and args_model.model.find('vgg') != -1:
@@ -321,12 +302,13 @@ if __name__ == '__main__':
 
         else:
             is_vgg=False
-            archi = utils.parse_archi(log_fname)
+            archi = utils.parse_archi(log_model)
             model = utils.construct_FCN(archi)
             PrunedClassifier = models.classifiers.PrunedCopyFCN
 
 
-        transform= utils.parse_transform(log_fname)
+        transform= utils.parse_transform(log_model)
+        logs = open(os.path.join(path_output, 'logs_eval.txt'), 'w')
     # Logs
         train_dataset, test_dataset, num_chs = utils.get_dataset(dataset=args_model.dataset,
                                                             dataroot=args_model.dataroot,
@@ -335,6 +317,7 @@ if __name__ == '__main__':
                                                                                 #augment=False,
                                                                 #imresize =imresize,
                                                                 )
+        print('Transform: {}'.format(train_dataset.transform), file=logs, flush=True)
         train_loader, size_train,\
             test_loader, size_test  = utils.get_dataloader( train_dataset,
                                                             test_dataset,
@@ -342,16 +325,15 @@ if __name__ == '__main__':
                                                             collate_fn=None,
                                                             pin_memory=True,
                                                             num_workers=4)
-        if not args.reset_random:
-            try:
-                new_keys = map(lambda x:x.replace('module.', ''), checkpoint_model['model'].keys())
-                checkpoint_model['model'] = OrderedDict(zip(list(new_keys), checkpoint_model['model'].values()))
-                #for key in state_dict.keys():
-                    #new_key = key.replace('module.', '')
+        try:
+            new_keys = map(lambda x:x.replace('module.', ''), checkpoint_model['model'].keys())
+            checkpoint_model['model'] = OrderedDict(zip(list(new_keys), checkpoint_model['model'].values()))
+            #for key in state_dict.keys():
+                #new_key = key.replace('module.', '')
 
-                model.load_state_dict(checkpoint_model['model'])
-            except RuntimeError as e:
-                print("Can't load mode (error {})".format(e))
+            model.load_state_dict(checkpoint_model['model'])
+        except RuntimeError as e:
+            print("Can't load mode (error {})".format(e))
         # else: # not a file, should be a vgg name
 
             # checkpoint = dict()
@@ -360,11 +342,6 @@ if __name__ == '__main__':
     keep = 1 - 1 / args.fraction
     os.makedirs(path_output, exist_ok=True)
 
-
-    if not args.debug:
-        logs = open(os.path.join(path_output, 'logs_eval.txt'), 'w')
-    else:
-        logs = sys.stdout
 #     logs = None
 
     print(os.sep.join((os.path.abspath(__file__).split(os.sep)[-2:])), file=logs)  # folder + name of the script
@@ -393,7 +370,7 @@ if __name__ == '__main__':
         ''' x: BxC
         targets: Bx1
 
-        returns: err of size 1
+        returns: error of size 1
         '''
         return  (x.argmax(dim=1)!=targets).float().mean(dim=0)
 
@@ -426,7 +403,7 @@ if __name__ == '__main__':
     names=['layer', 'stat', 'set']
     sets = ['train', 'test']
     columns=pd.MultiIndex.from_product([layers, stats, sets], names=names)
-    #index = pd.Index(np.arange(1, start_epoch+args.nepochs+1), name='epoch')
+    #index = pd.Index(np.arange(1, start_epoch+args.nepoch+1), name='epoch')
     index = pd.Index(np.arange(1, args.ndraw+1), name='draw')
     quant = pd.DataFrame(columns=columns, index=index, dtype=float)
 
@@ -497,8 +474,8 @@ if __name__ == '__main__':
                 y = y.to(device)
                 out_class = classifier(x)  # BxC,  # each output for each layer
                 loss = ce_loss(out_class, y)  # LxTxB
-                err = zero_one_loss(out_class, y)  # T
-                err_tot = (idx * err_tot + err.detach().cpu().numpy()) / (idx+1)  # mean error
+                error = zero_one_loss(out_class, y)  # T
+                err_tot = (idx * err_tot + error.detach().cpu().numpy()) / (idx+1)  # mean error
                 loss_tot = (idx * loss_tot + loss.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean loss
                 # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
                 #break
@@ -532,7 +509,7 @@ if __name__ == '__main__':
         return out, Y
 
 
-    def eval_class_mult(out_class, mult, only_loss=False):
+    def eval_class_mult(out_class, mult, out=None):
         """Eval the output (with multiplier first)"""
 
 
@@ -551,31 +528,31 @@ if __name__ == '__main__':
                 y = y.to(device)
                 loss = ce_loss(x, y)  # LxTxB
                 loss_tot = (idx * loss_tot + loss.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean loss
-                if not only_loss:
-                    err = zero_one_loss(x, y)
-                    err_tot = (idx * err_tot + err.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean err
+                error = zero_one_loss(x, y)
+                err_tot = (idx * err_tot + error.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean error
                 # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
                 #break
 
-
-        if only_loss:
+        if out is not None:
+            out['error'] = err_tot
             return loss_tot
         else:
             return loss_tot, err_tot
+
 
     #mult = 2**args.log_mult
     for t in range(1, args.ndraw+1):
         for l in range(1, N_L+1):
 
 
-            def eval_mult(mult, out_class):
+            def eval_mult(mult, out_class, out):
                 #global out_class
-                loss  = eval_class_mult(out_class, mult, only_loss=True)#epoch(classifier, train_loader, with_error=False)
+                loss  = eval_class_mult(out_class, mult, out)#epoch(classifier, train_loader, with_error=False)
                 return loss
 
 
-            mult = 1.
-            classifier = PrunedClassifier(model,l,mult, keep).to(device)
+            out={'error': 0}
+            classifier = PrunedClassifier(model,l, keep=keep).to(device)
             classifier.requires_grad_(False)
             if is_vgg and torch.cuda.device_count() > 1:
                 print("Let's use", torch.cuda.device_count(), "GPUs!", file=logs, flush=True)
@@ -584,19 +561,20 @@ if __name__ == '__main__':
             out_class = get_output_class(classifier, train_loader)
 
 
-            if args.optim_mult:
-                # mult0 = 1
-                # res = minimize(eval_mult, mult0, args=out_class, method='BFGS')#l, options={'disp': True})
-                #res = minimize_scalar(eval_mult, args=(out_class,), bounds=(0, 2**(N_L+2-l)), method='bounded')
-                res = minimize_scalar(eval_mult, args=(out_class,), method='brent')
-                #res = minimize_scalar(eval_mult, args=(out_class,), method='golden')
-                print(res, file=logs)
-                mult = res.x
+            error = out['error']
+            # mult0 = 1
+            # res = minimize(eval_mult, mult0, args=out_class, method='BFGS')#l, options={'disp': True})
+            #res = minimize_scalar(eval_mult, args=(out_class,), bounds=(0, 2**(N_L+2-l)), method='bounded')
+            res = minimize_scalar(eval_mult, args=(out_class,out), method='brent')
+            #res = minimize_scalar(eval_mult, args=(out_class,), method='golden')
+            print(res, file=logs)
+            loss = res.fun
+            mult = res.x
             #else:
             #    mult=2**(N_L+1-l) #res.multult0
 
-            classifier.mult = torch.tensor(mult, device=device, dtype=dtype)
-            loss, error = eval_epoch(classifier, train_loader)
+            # classifier.mult = torch.tensor(mult, device=device, dtype=dtype)
+            # loss, error = eval_epoch(classifier, train_loader)
             df_mult.loc[t, l] = mult
 
 

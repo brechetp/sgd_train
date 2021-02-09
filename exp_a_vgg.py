@@ -45,12 +45,12 @@ if __name__ == '__main__':
     parser.add_argument('--lr_update', '-lru', type=int, default=0, help='if any, the update of the learning rate')
     parser.add_argument('--lr_mode', '-lrm', default="num_param_tot", choices=["max", "hessian", "num_param_tot", "num_param_train", "manual"], help="the mode of learning rate attribution")
     parser.add_argument('--lr_step', '-lrs', type=int, default=30, help='the number of epochs for the lr scheduler')
-    parser.add_argument('--lrs_gamma',  type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
-    parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
+    parser.add_argument('--lr_gamma',  type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
+    parser.add_argument('--nepoch', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--ndraws', type=int, default=20, help='The number of permutations to test')
-    parser.add_argument('-F', '--fraction', type=int, defaut=2, help='the denominator of the removed fraction of the width')
+    parser.add_argument('-F', '--fraction', type=int, default=2, help='the denominator of the removed fraction of the width')
     parser_model = parser.add_mutually_exclusive_group(required=True)
     parser_model.add_argument('--model', help='path of the model to separate')
     parser_model.add_argument('--checkpoint', help='path of the previous computation checkpoint')
@@ -76,10 +76,10 @@ if __name__ == '__main__':
 
     if args.checkpoint is not None:  # continuing previous computation
         try:
-            nepochs = args.nepochs
+            nepoch = args.nepoch
             checkpoint = torch.load(args.checkpoint, map_location=device)
             args.__dict__.update(checkpoint['args'].__dict__)
-            args.nepochs = nepochs
+            args.nepoch = nepoch
             cont = True  # continue the computation
         except RuntimeError:
             print('Could not load the model')
@@ -105,6 +105,7 @@ if __name__ == '__main__':
     args_model = checkpoint_model['args']  # restore the previous arguments
 
     str_entry = 'entry_{}'.format(args.entry_layer)
+    log_model = os.path.join(root_model, 'logs.txt')
     path_output = os.path.join(root_model, args.name, str_entry)
     # Logs
 
@@ -130,10 +131,13 @@ if __name__ == '__main__':
     model,input_size  = models.pretrained.initialize_model(args_model.model, pretrained=False, freeze=True, num_classes=NUM_CLASSES)
     model.n_layers = utils.count_hidden_layers(model)
 
+    transform =utils.parse_transform(log_model)
+
     train_dataset, test_dataset, num_chs = utils.get_dataset(dataset=args_model.dataset,
                                                           dataroot=args_model.dataroot,
-                                                                normalize=True,
+                                                             tfm=transform,
                                                              )
+    print('Transform: {}'.format(train_dataset.transform), file=logs, flush=True)
     train_loader, size_train,\
         test_loader, size_test  = utils.get_dataloader( train_dataset,
                                                        test_dataset, batch_size
@@ -153,8 +157,8 @@ if __name__ == '__main__':
     except RuntimeError as e:
         print("Can't load mode (error {})".format(e))
 
-    #classifier = models.classifiers.Linear(model, args.ntry, args.keep_ratio).to(device)
-    #classifier = models.classifiers.ClassifierFCN(model, num_tries=args.ntry, Rs=args.remove, =args.depth_max).to(device)
+    #classifier = models.classifiers.Linear(model, args.ndraw, args.keep_ratio).to(device)
+    #classifier = models.classifiers.ClassifierFCN(model, num_tries=args.ndraw, Rs=args.remove, =args.depth_max).to(device)
     #if args.remove is not None:
     #    remove = args.remove # the number of neurons
     #else:  # fraction is not None
@@ -193,22 +197,22 @@ if __name__ == '__main__':
         ''' x: TxBxC
         targets: Bx1
 
-        returns: err of size T
+        returns: error of size T
         '''
         return  (x.argmax(dim=-1)!=targets).float().mean(dim=-1)
 
     #mse_loss = nn.MSELoss()
-    #if args.ntry == 1 or args.entry_layer == 0:  # only one try
+    #if args.ndraw == 1 or args.entry_layer == 0:  # only one try
     ce_loss = nn.CrossEntropyLoss(reduction='none')
 
     sets = ['train', 'test']
-    stats = ['loss', 'err']
+    stats = ['loss', 'error']
     #layers = np.arange(1, 1+1)#classifier.n_layers)  # the different layers, forward order
     ndraws = np.arange(1, start_id_draw+args.ndraws)  # the different tries
 
     names=['set', 'stat', 'draw']
     columns=pd.MultiIndex.from_product([sets, stats, ndraws], names=names)
-    index = pd.Index(np.arange(1, start_epoch+args.nepochs+1), name='epoch')
+    index = pd.Index(np.arange(1, start_epoch+args.nepoch+1), name='epoch')
     quant = pd.DataFrame(columns=columns, index=index, dtype=float)
 
     quant.sort_index(axis=1, inplace=True)  # sort for quicker access
@@ -274,8 +278,8 @@ if __name__ == '__main__':
                 y = y.to(device)
                 out_class = model(x)  # BxC,  # each output for each layer
                 loss = ce_loss(out_class, y)  # LxTxB
-                err = zero_one_loss(out_class, y)  # T
-                err_mean = (idx * err_mean + err.detach().cpu().numpy()) / (idx+1)  # mean error
+                error = zero_one_loss(out_class, y)  # T
+                err_mean = (idx * err_mean + error.detach().cpu().numpy()) / (idx+1)  # mean error
                 loss_mean = (idx * loss_mean + loss.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean loss
                 # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
                 #break
@@ -327,7 +331,7 @@ if __name__ == '__main__':
             classifier.features = nn.DataParallel(classifier.features)
             #classifier.new_sample()
             #model.classifier = nn.DataParallel(model.classifier
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lrs_gamma)  # reduces the learning rate by half every 20 epochs
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_gamma)  # reduces the learning rate by half every 20 epochs
 
         if id_draw ==  start_id_draw:
 
@@ -354,12 +358,12 @@ if __name__ == '__main__':
         frozen = False  # to freeze the next iteration
 
         while not stop:
-        #for epoch in tqdm(range(start_epoch, start_epoch+args.nepochs)):
+        #for epoch in tqdm(range(start_epoch, start_epoch+args.nepoch)):
 
             classifier.train()
             #loss_hidden_tot = np.zeros(classifier.L)  # for the
-            loss_train = 0 # np.zeros(args.ntry)  # for the
-            err_train = 0 #np.zeros(args.ntry)
+            loss_train = 0 # np.zeros(args.ndraw)  # for the
+            err_train = 0 #np.zeros(args.ndraw)
             #ones_hidden = torch.ones(classifier.L, device=device, dtype=dtype)
 
             for idx, (x, y) in enumerate(train_loader):
@@ -371,8 +375,8 @@ if __name__ == '__main__':
                 out_class = classifier(x)  # TxBxC,  # each output for each layer
                 loss = ce_loss(out_class, y)  # LxTxB
                 #loss_hidden = ce_loss(out_hidden, y)
-                err = zero_one_loss(out_class, y)  # T
-                err_train = (idx * err_train + err.detach().cpu().numpy()) / (idx+1)
+                error = zero_one_loss(out_class, y)  # T
+                err_train = (idx * err_train + error.detach().cpu().numpy()) / (idx+1)
                 loss_train = (idx * loss_train + loss.mean(dim=-1).detach().cpu().numpy()) / (idx+1)
                 loss.mean(dim=-1).backward()
                 # loss_hidden.mean(dim=1).backward(ones_hidden)
@@ -393,16 +397,16 @@ if __name__ == '__main__':
             loss_test, err_test = eval_epoch(classifier, test_loader)
 
 
-            quant.loc[pd.IndexSlice[epoch, ('train', 'err', id_draw)]] =  err_train
+            quant.loc[pd.IndexSlice[epoch, ('train', 'error', id_draw)]] =  err_train
             quant.loc[pd.IndexSlice[epoch, ('train', 'loss', id_draw)]] =  loss_train
 
-            quant.loc[pd.IndexSlice[epoch, ('test', 'err', id_draw)]] =  err_test
+            quant.loc[pd.IndexSlice[epoch, ('test', 'error', id_draw)]] =  err_test
             quant.loc[pd.IndexSlice[epoch, ('test', 'loss', id_draw)]] =  loss_test
 
 
             # stopping criterion
 
-            stop = (separated or epoch > start_epoch + args.nepochs)
+            stop = (separated or epoch > start_epoch + args.nepoch)
 
 
             if args.lr_step >0:
@@ -410,10 +414,10 @@ if __name__ == '__main__':
 
 
 
-            #print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
-            print('try: {}, ep {}, loss (test): {:g} ({:g}), err (test): {:g} ({:g}) {}'.format(
+            #print('ep {}, train loss (error) {:g} ({:g}), test loss (error) {:g} ({:g})'.format(
+            print('try: {}, ep {}, loss (test): {:g} ({:g}), error (test): {:g} ({:g}) {}'.format(
                 id_draw, epoch, quant.loc[epoch, ('train', 'loss', id_draw)], quant.loc[epoch, ('test', 'loss', id_draw)],
-                err_train,  quant.loc[epoch, ('val', 'err', id_draw)], ' (separated)' if separated else ''),
+                err_train,  quant.loc[epoch, ('val', 'error', id_draw)], ' (separated)' if separated else ''),
                 file=logs, flush=True)
 
 
@@ -437,7 +441,7 @@ if __name__ == '__main__':
                 )
 
                 g.set(yscale='log')
-                #g.set(title='ds = {}, width = {}, removed = {}, Tries = {}'.format(args_model.dataset, args_model.width, args.remove, args.ntry))
+                #g.set(title='ds = {}, width = {}, removed = {}, Tries = {}'.format(args_model.dataset, args_model.width, args.remove, args.ndraw))
                 g.fig.subplots_adjust(top=0.9, left= 0.1 )  # number of columns in the sublplot
                 g.fig.suptitle('ds = {}, removed = width / {}, draw = {}, name = {}'.format(args_model.dataset, args.fraction, id_draw,  args.name))
                 #g.set_axis_labels

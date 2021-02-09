@@ -403,7 +403,7 @@ def parse_transform(fname, *args):
 
     return transform
 
-def to_latex(dirname, quant, table_format, key_err="err", is_vgg=False) :
+def to_latex(dirname, quant, table_format, key_err="error", is_vgg=False) :
 
     if len(quant.columns.names) == 3:
         quant_describe = quant.groupby(level=["stat", "set"], axis=1, group_keys=False).describe()
@@ -573,10 +573,13 @@ def cast(s):
 
         return val
 
-    is_tuple = len(s.split(',')) > 1
+    is_tuple = len(s.split(',')) > 1 and s[0]=='('
+    is_list = len(s.split(',')) > 1 and s[0] == '['
 
     if is_tuple:
         val = tuple( cast_num(n.strip().lstrip('(').rstrip(')')) for n in s.split(',') if len(n) > 0)
+    elif is_list:
+        val = list( cast_num(n.strip().lstrip('[').rstrip(']')) for n in s.split(',') if len(n) > 0)
     else:
         if s == 'True':
             val = True

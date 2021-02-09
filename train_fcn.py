@@ -31,10 +31,10 @@ if __name__ == '__main__':
     parser.add_argument('--momentum', type=float, default=0.95, help="the momentum for SGD")
     parser.add_argument('--lr_mode', '-lrm', default="manual", choices=["max", "hessian", "num_param", "manual"], help="the mode of learning rate attribution")
     parser.add_argument('--lr_step', '-lrs', type=int, default=30, help='if any, the step for the learning rate scheduler')
-    parser.add_argument('--lrs_gamma',  type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
+    parser.add_argument('--lr_gamma',  type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
     parser.add_argument('--lr_update', '-lru', type=int, default=0, help='if any, the update of the learning rate')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
-    parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
+    parser.add_argument('--nepoch', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--depth', '-L', type=int, default=3, help='the number of layers for the network')
     parser_normalize = parser.add_mutually_exclusive_group()
     parser_normalize.add_argument('--normalize', action='store_true', dest='normalize',  help='normalize the input')
@@ -44,7 +44,6 @@ if __name__ == '__main__':
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
     parser.add_argument('--width', '-w', type=int, help='The width of the layers')
-    parser.add_argument('--vary_name', nargs='*', default=['depth', 'width'], help='the name of the parameter to vary in the name (appended)')
     parser.add_argument('--checkpoint', help='path of the previous computation checkpoint')
     parser.add_argument('--gd_mode', '-gdm', default='stochastic', choices=['full', 'stochastic'], help='whether the gradient is computed full batch or stochastically')
 
@@ -59,10 +58,10 @@ if __name__ == '__main__':
 
     if args.checkpoint is not None:  # we have some networks weights to continue
         try:
-            nepoch=args.nepochs
+            nepoch=args.nepoch
             checkpoint = torch.load(args.checkpoint, map_location=device)
             args.__dict__.update(checkpoint['args'].__dict__)
-            args.nepochs=nepoch
+            args.nepoch=nepoch
 
         except RuntimeError as e:
             print('Error loading the checkpoint at {}'.format(e))
@@ -80,8 +79,6 @@ if __name__ == '__main__':
         # default output directory
         args.output_root = utils.get_output_root(args)
 
-    if args.vary_name is not None:
-        args.name = utils.get_name(args)
 
 
 
@@ -169,7 +166,7 @@ if __name__ == '__main__':
     #lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
     lr_scheduler = None
     if args.lr_step>0:
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lrs_gamma)
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_gamma)
 
     if 'optimizer' in checkpoint.keys():
 
@@ -195,7 +192,7 @@ if __name__ == '__main__':
     stats = ['loss', 'error']
 
     columns=pd.MultiIndex.from_product([sets, stats], names=names)
-    index = pd.Index(np.arange(1, args.nepochs+start_epoch), name='epoch')
+    index = pd.Index(np.arange(1, args.nepoch+start_epoch), name='epoch')
     quant = pd.DataFrame(columns=columns, index=index, dtype=float)
 
 
@@ -265,7 +262,7 @@ if __name__ == '__main__':
                 stats[0] = ce_loss(out_class, y).detach().cpu().numpy()  # LxTxB
                 stats[1] = zero_one_loss(out_class, y).detach().cpu().numpy()  # T
                 stats_mean = ((idx * stats_mean) + stats) / (idx+1)
-                #err_mean = (idx * err_mean + err.detach().cpu().numpy()) / (idx+1)  # mean error
+                #err_mean = (idx * err_mean + error.detach().cpu().numpy()) / (idx+1)  # mean error
                 #loss_mean = (idx * loss_mean + loss.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean loss
                 # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
                 #break
@@ -280,7 +277,7 @@ if __name__ == '__main__':
     frozen = False
 
 
-    #for epoch in tqdm(range(start_epoch+1, start_epoch+args.nepochs+1)):
+    #for epoch in tqdm(range(start_epoch+1, start_epoch+args.nepoch+1)):
     # training loop
     while not stop:
 
@@ -289,7 +286,7 @@ if __name__ == '__main__':
         stats_train = np.zeros(2)
         stats = np.zeros(2)
         # 0: ce loss
-        # 1: 0-1 loss aka err
+        # 1: 0-1 loss aka error
 
 
         for idx, (x, y) in enumerate(train_loader):
@@ -331,11 +328,11 @@ if __name__ == '__main__':
         quant.loc[epoch, ('test', 'error')] = stats_test[1]
 
         stop = (separated
-                or epoch > start_epoch + args.nepochs) # no improvement over wait epochs or total of 400 epochs
+                or epoch > start_epoch + args.nepoch) # no improvement over wait epochs or total of 400 epochs
 
 
 
-        print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g}) ({})'.format(
+        print('ep {}, train loss (error) {:g} ({:g}), test loss (error) {:g} ({:g}) ({})'.format(
             epoch, quant.loc[epoch, ('train', 'loss')], quant.loc[epoch, ('train', 'error')],
             quant.loc[epoch, ('test', 'loss')], quant.loc[epoch, ('test', 'error')], str_frozen),
             #epoch, stats['stats_train']['ce'][-1], stats['stats_train']['zo'][-1],
@@ -368,7 +365,7 @@ if __name__ == '__main__':
             )
 
             g.set(yscale='log')
-            plt.savefig(fname=os.path.join(path_output, 'stats.pdf'), bbox_inces="tight")
+            plt.savefig(fname=os.path.join(path_output, 'stats.pdf'), bbox_inches="tight")
             plt.close('all')
 
             if args.save_model:  # we save every 5 epochs

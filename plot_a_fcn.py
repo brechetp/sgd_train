@@ -74,10 +74,10 @@ def select_min(df):
         # last epoch (at index indices[idx])
         df_min.loc[1, Idx[idx, :]] = df.loc[indices[idx],Idx[idx, :]]#.droplevel('try', axis=1)
     #df_min.loc[:, df_min.columns.get_level_values('layer') == 'last'] = df.xs(('last', idx_last), axis=1, level=[2, 3], drop_level=False).droplevel('try', axis=1)
-    #df_min.loc[:, df_min.columns.get_level_values('stat') == 'err'] *= 100
+    #df_min.loc[:, df_min.columns.get_level_values('stat') == 'error'] *= 100
     #df_min = df_min.loc[pd.IndexSlice[:, df_min.columns.get_level_values('layer').isin(range(1, n_layers+1))]]
 
-    #if not df.loc[epoch,  ('train', 'err', 1, indices[0] )] == 0:
+    #if not df.loc[epoch,  ('train', 'error', 1, indices[0] )] == 0:
     #    print('Not separated!', dirname)
     #else:
     return df_min
@@ -101,7 +101,7 @@ def process_df(quant, dirname, args=None, args_model=None, save=True):
 
     fig=plt.figure()
     df_reset = quant.reset_index()
-    df_plot = pd.melt(df_reset, id_vars='steps')
+    df_plot = pd.melt(df_reset, id_vars='draw')
     g = sns.relplot(
         data = df_plot,
         #col='',
@@ -124,7 +124,7 @@ def process_df(quant, dirname, args=None, args_model=None, save=True):
             if args_model.dataset == "mnist":
                 width = 245  # WARNING hard coded
         removed = "width / {}".format(args.fraction) if hasattr(args, 'fraction') and args.fraction is not None else args.remove
-        g.fig.suptitle('ds = {}, width = {}, removed = {}, steps = {}'.format(args_model.dataset, width, removed, args.ntry))
+        g.fig.suptitle('ds = {}, width = {}, removed = {}, draw = {}'.format(args_model.dataset, width, removed, args.ndraw))
     g.set(yscale='linear')
     plt.savefig(fname=os.path.join(dirname, 'plot.pdf'))
     g.set(yscale='log')
@@ -170,7 +170,7 @@ def eval_test_set(checkpoint, fname, log_fname):
     loss_test, err_test = eval_epoch(model, test_loader)
     quant.columns.name = add_sets
     quant.loc[epoch, ('test', 'loss')] = loss_test
-    quant.loc[epoch, ('test', 'err')] = err_test
+    quant.loc[epoch, ('test', 'error')] = err_test
 
 
 def process_subdir(subdir, device, N_L=5, N_T=20):
@@ -184,12 +184,12 @@ def process_subdir(subdir, device, N_L=5, N_T=20):
     regex_entry = re.compile("entry_(\d+)")
     layers = np.arange(1, N_L+1)#classifier.n_layers)  # the different layers, forward order
     stats = ['loss', 'error']
-    #tries = np.arange(1, 1+args.ntry)  # the different tries
+    #tries = np.arange(1, 1+args.ndraw)  # the different tries
 
     names=['set', 'layer', 'stat']
     columns=pd.MultiIndex.from_product([layers, stats], names=names)
-    #index = pd.Index(np.arange(1, start_epoch+args.nepochs+1), name='epoch')
-    index = pd.Index(np.arange(1, N_T+1), name='steps')
+    #index = pd.Index(np.arange(1, start_epoch+args.nepoch+1), name='epoch')
+    index = pd.Index(np.arange(1, N_T+1), name='draw')
     df_bundle = pd.DataFrame(columns=columns, index=index, dtype=float)
     epochs = {}
 
@@ -214,7 +214,7 @@ def process_subdir(subdir, device, N_L=5, N_T=20):
         df_bundle = pd.concat([df_bundle, quant], ignore_index=False, axis=1)
 
         #df_bundle.loc[Idx[:, (idx_entry,'loss')]] = quant.loc[Idx[epoch, ('train', 'loss')]]
-        #df_bundle.loc[Idx[:, (idx_entry,'error')]] = quant.loc[Idx[epoch, ('train', 'err')]]
+        #df_bundle.loc[Idx[:, (idx_entry,'error')]] = quant.loc[Idx[epoch, ('train', 'error')]]
         epochs[idx_entry] = epoch
 
     df_bundle.sort_index(axis=1, inplace=True)  # sort for quicker access
@@ -234,11 +234,11 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', '-lr', type=float, default=1e-3, help='leraning rate')
     parser.add_argument('--lr_update', type=int, default=0, help='update for the learning rate in epochs')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
-    parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
+    parser.add_argument('--nepoch', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
-    parser.add_argument('--ntry', type=int, default=10, help='The number of permutations to test')
+    parser.add_argument('--ndraw', type=int, default=10, help='The number of permutations to test')
     parser.add_argument('-R', '--remove', type=int, default=100, help='the number of neurons to remove at each layer')
     parser_model = parser.add_mutually_exclusive_group(required=False)
     parser_model.add_argument('--model', help='path of the model to separate')
@@ -250,7 +250,7 @@ if __name__ == '__main__':
     parser_device.add_argument('--cuda', action='store_false', dest='cpu')
     parser.add_argument('--depth_max', type=int, help='the maximum depth to which operate')
     #parser.add_argument('--end_layer', type=int, help='if set the maximum layer for which to compute the separation (forward indexing)')
-    parser.add_argument('--steps', type=int, default=10, help='The number of steps to take')
+    parser.add_argument('--draw', type=int, default=10, help='The number of draw to take')
     parser.set_defaults(cpu=False)
     parser.add_argument('dir', nargs='*', help='the directory to process')
 

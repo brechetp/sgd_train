@@ -27,49 +27,7 @@ import torch
 import argparse
 import utils
 
-from sklearn.linear_model import LogisticRegression
 
-#from torchvision import models, datasets, transforms
-
-try:
-    from tqdm import tqdm
-except:
-    def tqdm(x): return x
-
-def select_min(df):
-
-    n_layers = len(quant.columns.levels[1])
-    #columns = quant.columns.name
-    indices = np.zeros(n_layers, dtype=int)
-    Idx = pd.IndexSlice
-
-    for idx in range(n_layers):
-        # replace NaN with 0
-        val_min = df.loc[:, Idx["error", :, idx]].min()  # for all widths
-        mask = df.loc[:, Idx['error', :, idx]] == val_min
-        indices[idx] = df.loc[mask, Idx["loss", :, idx]].idxmin()  # if several min, take the min of them
-        # the indices for the try that has the minimum training
-        # error at the epoch epoch
-
-    # remove the column index 'try'
-    cols = pd.MultiIndex.from_product(df.columns.levels, names=df.columns.names)  # all but the try
-    df_min = pd.DataFrame(columns=cols, index=[1])
-    df_min.index.name = 'step'
-
-    for idx in range(n_layers):
-        # select the try that has the minimum training error at the
-        # last epoch (at index indices[idx])
-        df_min.loc[1, Idx[idx, :]] = df.loc[indices[idx],Idx[idx, :]]#.droplevel('try', axis=1)
-    #df_min.loc[:, df_min.columns.get_level_values('layer') == 'last'] = df.xs(('last', idx_last), axis=1, level=[2, 3], drop_level=False).droplevel('try', axis=1)
-    #df_min.loc[:, df_min.columns.get_level_values('stat') == 'err'] *= 100
-    #df_min = df_min.loc[pd.IndexSlice[:, df_min.columns.get_level_values('layer').isin(range(1, n_layers+1))]]
-
-    #if not df.loc[epoch,  ('train', 'err', 1, indices[0] )] == 0:
-    #    print('Not separated!', dirname)
-    #else:
-    return df_min
-
-    #    print('Separated!', dirname)
 
 def process_checkpoint(checkpoint):
     '''Read and process a previously computed result stored inside a checkpoint'''
@@ -86,7 +44,7 @@ def process_df(quant, dirname, uid, args=None, args_model=None, save=True):
     if quant.columns.names != ["stat", "set", "layer", "width"]:
         # the order is
         # perform pivot
-        quant = pd.melt(quant.reset_index(), id_vars="steps").pivot(index="steps", columns=["stat", "set", "layer", "width"], values="value")
+        quant = pd.melt(quant.reset_index(), id_vars="draw").pivot(index="draw", columns=["stat", "set", "layer", "width"], values="value")
 
     output_root = os.path.join(dirname, f"meta_{uid}")
     os.makedirs(output_root, exist_ok=True)
@@ -114,7 +72,7 @@ def process_df(quant, dirname, uid, args=None, args_model=None, save=True):
     #f, axes = plt.subplots(1, 2, figsize=[10., 5.])
 
     df_reset = quant.reset_index()
-    df_plot = pd.melt(df_reset, id_vars='steps')#.query("layer>0")
+    df_plot = pd.melt(df_reset, id_vars='draw')#.query("layer>0")
     df_plot_no_0 = df_plot.query('layer>0')
     df_plot_0 = df_plot.query('layer==0')
     #relative quantities
@@ -130,7 +88,7 @@ def process_df(quant, dirname, uid, args=None, args_model=None, save=True):
     utils.to_latex(output_root, quant_rel, table_format, key_err="error")
 
     df_reset_rel = quant_rel.reset_index()
-    df_plot_rel = pd.melt(df_reset_rel, id_vars="steps")
+    df_plot_rel = pd.melt(df_reset_rel, id_vars="draw")
 
     # palette=sns.color_palette(n_colors=2)  # the two datasets
     palette=sns.color_palette(n_colors=N_L)  # the N_L layers
@@ -227,7 +185,7 @@ def process_df(quant, dirname, uid, args=None, args_model=None, save=True):
     # rp.fig.subplots_adjust(top=0.85, left=0.10)
     # if args_model is not None and args is not None:
        # removed = "width / {}".format(args.fraction) if hasattr(args, 'fraction') and args.fraction is not None else args.remove
-       # rp.fig.suptitle('ds = {}, width = {}, removed = {}, steps = {}'.format(args_model.dataset, args_model.width, removed, args.ntry))
+       # rp.fig.suptitle('ds = {}, width = {}, removed = {}, draw = {}'.format(args_model.dataset, args_model.width, removed, args.ndraw))
     # #rp.set(yscale='log')
     # #rp.set(ylabel='%')
     # plt.savefig(fname=os.path.join(output_root, 'relplot.pdf'))
@@ -239,12 +197,12 @@ def process_df(quant, dirname, uid, args=None, args_model=None, save=True):
         # rel_error = pd.concat([rel_error, abs(errors.loc[:, idx_col] - errors[0][W][1]) / errors[0][W][1]], axis=1, ignore_index=False)
         # rel_losses = pd.concat([rel_losses,  abs(losses.loc[:, idx_col] - losses[0][W][1]) / losses[0][W][1]], axis=1, ignore_index=False)
 
-    # #rel_error_plot = pd.melt(rel_error.reset_index(), id_vars="steps")#, id_vars="steps")
-    # #rel_losses_plot = pd.melt(rel_losses.min(axis=0).reset_index(), id_vars="layer")#, id_vars="steps")
+    # #rel_error_plot = pd.melt(rel_error.reset_index(), id_vars="draw")#, id_vars="draw")
+    # #rel_losses_plot = pd.melt(rel_losses.min(axis=0).reset_index(), id_vars="layer")#, id_vars="draw")
 
-    df_plot = pd.melt(df_reset, id_vars='steps')#.query("layer>0")
-    #errors_plot = pd.melt(errors.reset_index(), id_vars="steps").query("layer>0")
-    #losses_plot = pd.melt(losses.reset_index(), id_vars="steps").query("layer>0")
+    df_plot = pd.melt(df_reset, id_vars='draw')#.query("layer>0")
+    #errors_plot = pd.melt(errors.reset_index(), id_vars="draw").query("layer>0")
+    #losses_plot = pd.melt(losses.reset_index(), id_vars="draw").query("layer>0")
     cols = ["stat", "set", "layer", "width"]
     # plt.figure()
 
@@ -262,8 +220,8 @@ def process_df(quant, dirname, uid, args=None, args_model=None, save=True):
     # #lp = rel_losses.min(axis=0).plot(kind='line', hue='width', x='layer')
     # mp = sns.relplot(
         # #data=rel_losses.min(axis=0).to_frame(name="loss"),
-        # # data=df_plot_rel, #df_plot.pivot(index="steps", columns=cols).min(axis=0).to_frame(name="value"),
-        # data=df_plot.pivot(index="steps", columns=cols).min(axis=0).to_frame(name="value"),
+        # # data=df_plot_rel, #df_plot.pivot(index="draw", columns=cols).min(axis=0).to_frame(name="value"),
+        # data=df_plot.pivot(index="draw", columns=cols).min(axis=0).to_frame(name="value"),
         # # style="layer",
         # row=row,
         # row_order = row_order,
@@ -319,7 +277,7 @@ def process_df(quant, dirname, uid, args=None, args_model=None, save=True):
             df_plot= quant.loc[:, Idx[stat, setn, 1:, :]].min(axis=0).to_frame(name="value")
             lp = sns.lineplot(
                 #data=rel_losses.min(axis=0).to_frame(name="loss"),
-                # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="steps", columns=col_order).min(axis=0).to_frame(name="value"),
+                # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="draw", columns=col_order).min(axis=0).to_frame(name="value"),
                 data=df_plot,
                 #hue="width",
                 hue="layer",
@@ -405,7 +363,7 @@ def process_df(quant, dirname, uid, args=None, args_model=None, save=True):
             df_plot= quant.loc[:, Idx[stat, setn, 1:, :]].min(axis=0).to_frame(name="value")
             lp = sns.lineplot(
                 #data=rel_losses.min(axis=0).to_frame(name="loss"),
-                # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="steps", columns=col_order).min(axis=0).to_frame(name="value"),
+                # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="draw", columns=col_order).min(axis=0).to_frame(name="value"),
                 data=df_plot,
                 #hue="width",
                 hue="layer",
@@ -466,122 +424,6 @@ def process_df(quant, dirname, uid, args=None, args_model=None, save=True):
     plt.margins()
     plt.savefig(fname=os.path.join(output_root, "error_train.pdf"), bbox_inches='tight')
 
-    # for i in range(N_L):
-
-    # or i, stat in enumerate(["loss", "error"]):
-        # for j, setn in enumerate(["train", "test"]):
-            # if stat == "loss" and setn=="test":
-                # continue
-            # axes[k] = rp.axes[j,i]
-
-            # ax.plot((0,quant_ref[stat, i][0]), slope=0, ls=":", zorder=2, c='g')
-
-            # sns.lineplot(
-                # #data=rel_losses.min(axis=0).to_frame(name="loss"),
-                # data=df_plot_rel.query(f"stat=='{stat}' & layer=={i+1}").pivot(index="steps", columns=cols).min(axis=0).to_frame(name="value"),
-                # #hue="width",
-                # hue="set",
-                # hue_order=["train", "test"],
-                # #col="stat",
-                # #col_order=["loss", "error"],
-                # x="width",
-                # y="value",
-                # #kind='line',
-                # #legend="full",
-                # # style='layer',
-                # legend=False,#'brief',
-                # ax=ax_loss,
-                # alpha=0.5,
-                # #style='layer',
-                # #markers=['*', '+'],
-                # # dashes=[(2,2),(2,2)],
-                # # legend_out=True,
-            # )
-            # mp.axes[0,1].set_ylabel("error (%)")
-            # mp.axes[0,0].set_title("Train Error")
-            # mp.axes[0,1].set_title("Test Error")
-
-            # ax_err = mp.axes[i, 1] if N_L == 1 else mp.axes[1, i]
-            # ax_err.set_title(f"Error" + (N_L>1)* f", Layer {i+1}")
-            # ax_err.set_ylabel("absolute delta error (%)")
-            # # mp.axes[1,1].set_title("Test Loss")
-
-        # for ax in ax_loss.lines[-2:]:  # the last two
-            # ax.set_linestyle('--')
-        # leg_loss = mp_loss.get_legend()
-
-
-
-        # sns.lineplot(
-            # #data=rel_losses.min(axis=0).to_frame(name="loss"),
-            # data=df_plot_rel.query(f"stat=='error' & layer=={i+1}").pivot(index="steps", columns=cols).min(axis=0).to_frame(name="value"),
-            # #hue="width",
-            # hue="set",
-            # hue_order=["train", "test"],
-            # #col="stat",
-            # #col_order=["loss", "error"],
-            # x="width",
-            # y="value",
-            # #kind='line',
-            # #legend="full",
-            # # style='layer',
-            # # legend='brief',
-            # legend=False,
-            # ax=ax_err,
-            # alpha=0.5,
-            # #palette=sns.color_palette(n_colors=N_L),
-            # #style='layer',
-            # markers=True,
-            # # dashes=[(2,2),(2,2)],
-        # )
-        # # rp.axes[0,1].lines[-1].set_linestyle('--')
-
-        # for ax in ax_err.lines[-2:]:  # the last two + legend
-            # ax.set_linestyle('--')
-
-    # mp.add_legend(plt.legend(mp.axes[0,1].lines[-2:], ("min",)))
-    # mp_err.legend().set_title("min")
-    # # mp.axes[1,1].set_ylabel("loss")
-    plt.margins()
-    plt.savefig(fname=os.path.join(output_root,f"min_quant_{stat}.pdf"), bbox_inches="tight")
-
-    # plt.figure()
-
-    # lp = sns.lineplot(
-        # data=rel_error.min(axis=0).to_frame(name="error"),
-        # hue="layer",
-        # x="width",
-        # y="error",
-        # legend="full",
-        # palette=sns.color_palette(n_colors=N_L),
-        # style='layer',
-        # markers=True,
-        # #y="value",
-    # )
-    # lp.axes.set_ylabel("relative difference")
-    # lp.axes.set_title("Error")
-    # rp.axes[0,1].set_ylabel("error")
-    # plt.savefig(fname=os.path.join(output_root, "rel_error.pdf"))
-
-
-
-    # only_min = select_min(quant)  # select the draw with minimum error
-    # only_min_plot = pd.melt(only_min.reset_index(), id_vars='step')
-
-
-
-    # m = sns.relplot(data=only_min_plot.query('layer > 0'),
-    # #m = only_min_plot.plot(x='layer', kind='line', y='value')
-        # col='stat',
-        # x='layer',
-        # y='value',
-        # kind='scatter',
-        # facet_kws={
-            # 'sharey': False,
-            # 'sharex': True
-        # }
-    # )
-    # plt.savefig(fname=os.path.join(output_root, 'plot_min.pdf'))
     plt.close('all')
     return
 
@@ -598,35 +440,9 @@ if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
 
     parser = argparse.ArgumentParser('Evaluating a copy of a classifier with removed units')
-    parser.add_argument('--dataset', '-dat', default='mnist', type=str, help='dataset')
-    parser.add_argument('--dataroot', '-droot', default='./data/', help='the root for the input data')
-    parser.add_argument('--output_root', '-o', type=str, help='output root for the results')
-    parser.add_argument('--name', default='eval-copy', type=str, help='the name of the experiment')
-    parser.add_argument('--vary_name', nargs='*', default=['depth', 'width'], help='the name of the parameter to vary in the name (appended)')
-    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-3, help='leraning rate')
-    parser.add_argument('--lr_update', type=int, default=0, help='update for the learning rate in epochs')
-    parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
-    parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
-    parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
-    parser.add_argument('--debug', action='store_true', help='debug')
-    parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
-    parser.add_argument('--ntry', type=int, default=10, help='The number of permutations to test')
-    parser.add_argument('-R', '--remove', type=int, default=100, help='the number of neurons to remove at each layer')
-    # parser_model = parser.add_mutually_exclusive_group(required=True)
-    # parser_model.add_argument('--model', help='path of the model to separate')
-    # parser_model.add_argument('--directory', help='path of the directory where results are')
-    # parser_model.add_argument('--checkpoint', help='path of the previous computation checkpoint')
-    # parser_model.add_argument('--csv', help='path of the previous saved csv file')
-    # parser_model.add_argument('--width', type=int, help='width for a random network')
-    parser.add_argument('--reset_random', action='store_true', help='randomly reset the model')
-    parser.add_argument('--gd_mode', '-gdm', default='stochastic', choices=['full', 'stochastic'], help='whether the gradient is computed full batch or stochastically')
-    parser_device = parser.add_mutually_exclusive_group()
+    parser_device= parser.add_mutually_exclusive_group(required=False)
     parser_device.add_argument('--cpu', action='store_true', dest='cpu', help='force the cpu model')
     parser_device.add_argument('--cuda', action='store_false', dest='cpu')
-    parser.add_argument('--depth', type=int, help='the depth for init network')
-    #parser.add_argument('--end_layer', type=int, help='if set the maximum layer for which to compute the separation (forward indexing)')
-    parser.add_argument('--steps', type=int, default=20, help='The number of steps to take')
-   # parser.add_argument('--log_mult', type=int, default=1, help='The log2 of the mulltiplicative factor')
     parser.add_argument('dirs', nargs='*', help='the directories to process')
     parser.add_argument('--table_format', choices=["wide", "long"], default="long")
     parser.set_defaults(cpu=False)
@@ -662,35 +478,20 @@ if __name__ == '__main__':
                 f_model = os.path.join(os.path.dirname(os.path.dirname(f)), "checkpoint.pth")  # the original model
                 chkpt_model =torch.load(f_model, map_location=device)
 
-                #args_model = chkpt_model['args']
-                #N_L = args_model.depth
                 args_chkpt  = chkpt['args']
                 args_model = chkpt_model['args']
                 width = args_model.width
                 N_L = args_model.depth
-                N_T = args_chkpt.steps
+                N_T = args_chkpt.ndraws
                 layers = np.arange(1, N_L+1)#classifier.n_layers)  # the different layers, forward order
                 stats = ['loss', 'error']
                 sets = ['train', 'test']
-                #tries = np.arange(1, 1+args.ntry)  # the different tries
-                #index = pd.Index(np.arange(1, N_T+1), name='steps')
-                #df_bundle = pd.DataFrame(columns=columns, dtype=float)
 
 
                 Idx = pd.IndexSlice
 
-                    #index = pd.Index(np.arange(1, start_epoch+args.nepochs+1), name='epoch')
+                    #index = pd.Index(np.arange(1, start_epoch+args.nepoch+1), name='epoch')
 
-
-                #match = regex_entry.search(file_entry)
-                #if match is None:
-                #    continue
-                #checkpoint = torch.load(filename, map_location=device)
-                #args_copy = checkpoint['args']
-                #log_mult = args_copy.log_mult#int(match.groups()[0])
-                #columns=pd.MultiIndex.from_product([[log_mult], layers, stats], names=names)
-                #epoch = checkpoint['epochs']
-#            nlevel = len(quant.columns.levels)
 
                 quant = chkpt['quant'].sort_index(axis=1)
                 C = len(quant.columns)
@@ -700,14 +501,8 @@ if __name__ == '__main__':
                 quant.columns = pd.MultiIndex.from_product(levels,
                                                         names= ['width'] + quant.columns.names,
                                                         )
-                # quant.columns = pd.MultiIndex.from_arrays([quant.columns.get_level_values(1), quant.columns.get_level_values(0), level_width],
-                                                        # quant.columns.names[::-1] + ['width'],
-                                                        # )
 
                 df_bundle = pd.concat([df_bundle, quant], ignore_index=False, axis=1)
-                #df_bundle.loc[:, (log_mult, layers, 'loss')] = quant.xs('loss', level=1, axis=1)
-                #df_bundle.loc[Idx[:, (log_mult, layers, 'error')]] = quant.xs('error', level=1, axis=1)
-                #epochs[idx_entry] = epoch
 
 
             df_bundle = df_bundle.sort_index(level=0, axis=1)

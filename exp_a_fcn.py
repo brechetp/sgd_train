@@ -23,14 +23,6 @@ import torch
 import argparse
 import utils
 
-from sklearn.linear_model import LogisticRegression
-
-#from torchvision import models, datasets, transforms
-
-try:
-    from tqdm import tqdm
-except:
-    def tqdm(x): return x
 
 
 if __name__ == '__main__':
@@ -44,16 +36,13 @@ if __name__ == '__main__':
     parser.add_argument('--lr_update', '-lru', type=int, default=0, help='if any, the update of the learning rate')
     parser.add_argument('--lr_mode', '-lrm', default="manual", choices=["max", "hessian", "num_param_tot", "num_param_train", "manual"], help="the mode of learning rate attribution")
     parser.add_argument('--lr_step', '-lrs', type=int, default=30, help='if any, the step for the learning rate scheduler')
-    parser.add_argument('--lrs_gamma',  type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
+    parser.add_argument('--lr_gamma',  type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
-    parser.add_argument('--nepochs', type=int, default=400, help='the number of epochs to train for')
+    parser.add_argument('--nepoch', type=int, default=400, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--ndraw', type=int, default=20, help='The number of permutations to test')
-    parser_remove = parser.add_mutually_exclusive_group(required=False)
-    parser_remove.add_argument('-R', '--remove', type=int, help='the number of neurons to remove at each layer')
-    parser_remove.add_argument('-F', '--fraction', type=int, help='the denominator of the removed fraction of the width')
-    parser.set_defaults(F=2)  # default: remove half the width
+    parser.add_argument('-F', '--fraction', type=int, default=2, help='the denominator of the removed fraction of the width')
     parser_model = parser.add_mutually_exclusive_group(required=True)
     parser_model.add_argument('--model', help='path of the model to separate')
     parser_model.add_argument('--checkpoint', help='path of the previous computation checkpoint')
@@ -77,10 +66,10 @@ if __name__ == '__main__':
 
     if args.checkpoint is not None:  # continuing previous computation
         try:
-            nepochs = args.nepochs
+            nepoch = args.nepoch
             checkpoint = torch.load(args.checkpoint, map_location=device)
             args.__dict__.update(checkpoint['args'].__dict__)
-            args.nepochs = nepochs
+            args.nepoch = nepoch
             cont = True  # continue the computation
         except RuntimeError:
             print('Could not load the model')
@@ -107,7 +96,7 @@ if __name__ == '__main__':
 
     path_output = os.path.join(root_model, args.name)
     # Logs
-    log_fname = os.path.join(root_model, 'logs.txt')
+    log_model = os.path.join(root_model, 'logs.txt')
     str_entry = 'entry_{}'.format(args.entry_layer)
     #draw_idx = utils.find_draw_idx(path_output)
 
@@ -130,10 +119,12 @@ if __name__ == '__main__':
 
     #imresize = (256, 256)
     #imresize=(64,64)
+    transform =utils.parse_transform(log_model)
     train_dataset,  test_dataset, num_chs = utils.get_dataset(dataset=args_model.dataset,
                                                           dataroot=args_model.dataroot,
-                                                              normalize=args_model.normalize,
+                                                              tfm=transform,
                                                             )
+    print('Transform: {}'.format(train_dataset.transform), file=logs, flush=True)
     train_loader, size_train,\
     test_loader, size_test  = utils.get_dataloader( train_dataset,
                                                     test_dataset, batch_size
@@ -148,7 +139,7 @@ if __name__ == '__main__':
 
 
 
-    archi = utils.parse_archi(log_fname)
+    archi = utils.parse_archi(log_model)
     model = utils.construct_FCN(archi)
     try:
         model.load_state_dict(checkpoint_model['model'])
@@ -159,10 +150,7 @@ if __name__ == '__main__':
 
     #classifier = models.classifiers.Linear(model, args.ndraw, args.keep_ratio).to(device)
     #classifier = models.classifiers.ClassifierFCN(model, num_tries=args.ndraw, Rs=args.remove, depth_max=args.depth_max).to(device)
-    if args.remove is not None:
-        remove = args.remove # the number of neurons
-    else:  # fraction is not None, denominator of the fraction
-        remove = 1/args.fraction
+    remove = 1/args.fraction
 
     classifier = models.classifiers.AnnexFCN(model,
                                                         num_tries=args.ndraw,
@@ -197,7 +185,7 @@ if __name__ == '__main__':
         ''' x: TxBxC
         targets: Bx1
 
-        returns: err of size T
+        returns: error of size T
         '''
         return  (x.argmax(dim=-1)!=targets).float().mean(dim=-1)
 
@@ -215,12 +203,11 @@ if __name__ == '__main__':
             '''
 
 
-            if input.ndim == 3:
-                T, B, C = input.size()
-                cond = input.gather(2,target.view(1, -1, 1).expand(T, -1, -1)).squeeze(2)  # TxBx1
-            #else:
-            #    B, C = input.size()
-            #    cond = input.gather(1, target.view(-1, 1)).squeeze()
+            T, B, C = input.size()
+            cond = input.gather(2,target.view(1, -1, 1).expand(T, -1, -1)).squeeze(2)  # TxBx1
+            # else:
+               # B, C = input.size()
+               # cond = input.gather(1, target.view(-1, 1)).squeeze()
             output = - cond + input.logsumexp(dim=-1)
             return output
 
@@ -232,7 +219,7 @@ if __name__ == '__main__':
 
     lr_scheduler = None
     if args.lr_step>0:
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lrs_gamma)
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_gamma)
 
     print('Optimizer: {}'.format(optimizer), file=logs, flush=True)
     if 'lr_scheduler' in checkpoint.keys() and checkpoint['lr_scheduler'] is not None:
@@ -255,13 +242,13 @@ if __name__ == '__main__':
     start_epoch = checkpoint.get('epochs', 0)
 
     sets = ['train', 'test']
-    stats = ['loss', 'err']
+    stats = ['loss', 'error']
     #layers = np.arange(1, 1+1)#classifier.n_layers)  # the different layers, forward order
     tries = np.arange(1, 1+args.ndraw)  # the different tries
 
-    names=['set', 'stat', 'try']
+    names=['set', 'stat', 'draw']
     columns=pd.MultiIndex.from_product([sets, stats, tries], names=names)
-    index = pd.Index(np.arange(1, start_epoch+args.nepochs+1), name='epoch')
+    index = pd.Index(np.arange(1, start_epoch+args.nepoch+1), name='epoch')
     quant = pd.DataFrame(columns=columns, index=index, dtype=float)
 
     quant.sort_index(axis=1, inplace=True)  # sort for quicker access
@@ -296,9 +283,10 @@ if __name__ == '__main__':
     def save_checkpoint(checkpoint=None, name=None, fname=None):
         '''Save checkpoint to disk'''
 
-        global path_output
+        global path_output, args
+
         if name is None:
-            name = "checkpoint"
+            name = "checkpoint_entry_{}".format(args.entry_layer)
 
         if fname is None:
             fname = os.path.join(path_output, name + '.pth')
@@ -352,7 +340,7 @@ if __name__ == '__main__':
 
 
     while not stop:
-    #for epoch in tqdm(range(start_epoch, start_epoch+args.nepochs)):
+    #for epoch in tqdm(range(start_epoch, start_epoch+args.nepoch)):
 
 
         classifier.train()
@@ -370,8 +358,8 @@ if __name__ == '__main__':
             out_class = classifier(x)  # TxBxC,  # each output for each layer
             loss = ce_loss(out_class, y)  # LxTxB
             #loss_hidden = ce_loss(out_hidden, y)
-            err = zero_one_loss(out_class, y)  # T
-            err_train = (idx * err_train + err.detach().cpu().numpy()) / (idx+1)
+            error = zero_one_loss(out_class, y)  # T
+            err_train = (idx * err_train + error.detach().cpu().numpy()) / (idx+1)
             loss_train = (idx * loss_train + loss.mean(dim=-1).detach().cpu().numpy()) / (idx+1)
         # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
             if not frozen:  # if we have to update the weights
@@ -392,31 +380,31 @@ if __name__ == '__main__':
             print("Freezing the next iteration", file=logs)
 
         stop = (separated
-                or epoch > start_epoch + args.nepochs
+                or epoch > start_epoch + args.nepoch
                 )
 
 
-        quant.loc[pd.IndexSlice[epoch, ('train', 'err')]] =  err_train.reshape(-1)
+        quant.loc[pd.IndexSlice[epoch, ('train', 'error')]] =  err_train.reshape(-1)
         quant.loc[pd.IndexSlice[epoch, ('train', 'loss')]] =  loss_train.reshape(-1)
 
 
-        loss_test, err_test = eval_epoch(model, test_loader)
+        loss_test, err_test = eval_epoch(classifier, test_loader)
 
-        quant.loc[pd.IndexSlice[epoch, ('test', 'err')]] =  (err_test).reshape(-1)
+        quant.loc[pd.IndexSlice[epoch, ('test', 'error')]] =  (err_test).reshape(-1)
         quant.loc[pd.IndexSlice[epoch, ('test', 'loss')]] =  loss_test.reshape(-1)
 
 
 
-        #print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
-        print('ep {}, train loss (min/max): {:g} / {:g}, err (min/max): {:g}/{:g} {}'.format(
+        #print('ep {}, train loss (error) {:g} ({:g}), test loss (error) {:g} ({:g})'.format(
+        print('ep {}, train loss (min/max): {:g} / {:g}, error (min/max): {:g}/{:g} {}'.format(
             epoch, quant.loc[epoch, ('train', 'loss')].min(), quant.loc[epoch, ('train', 'loss')].max(),
-            err_min, quant.loc[epoch, ('train', 'err')].max(), ' (frozen)' if frozen else ''),
+            err_min, quant.loc[epoch, ('train', 'error')].max(), ' (frozen)' if frozen else ''),
             file=logs, flush=True)
 
         if args.lr_step>0:
             lr_scheduler.step()
         #end_layer = 1
-        if epoch % 5 == 0:
+        if epoch % 5 == 0 or stop:
 
             quant_reset = quant.reset_index()
             quant_plot = pd.melt(quant_reset, id_vars='epoch')
@@ -451,14 +439,13 @@ if __name__ == '__main__':
             if args.save_model:
                 save_checkpoint()
 
-        if stop:
-            save_checkpoint()
-            if separated:
-                print("Data is separated.", file=logs)
-                sys.exit(0)  # success
-            else:
-                print("Data is NOT separated.", file=logs)
-                sys.exit(1)  # failure
+
+    if separated:
+        print("Data is separated.", file=logs)
+        sys.exit(0)  # success
+    else:
+        print("Data is NOT separated.", file=logs)
+        sys.exit(1)  # failure
 
 
 
