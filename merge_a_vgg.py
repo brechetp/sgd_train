@@ -339,7 +339,7 @@ if __name__ == '__main__':
                     columns_min = pd.MultiIndex.from_product(list(quant.columns.levels[:2]), names=quant.columns.names[:2])
                     n_draws = chkpt["draws"]
                     index = pd.Index(np.arange(1, n_draws+1), name="draw")
-                    quant_min =  pd.DataFrame(index=index, columns = columns_min, dtype=np.float)
+                    quant_min =  pd.DataFrame(index=index, columns = columns_min, dtype=float)
 
                     for d in index:  # select the min over the epochs
                         quant_min.loc[d] = quant.loc[idx_min.loc[d, :], Idx[:, :, d]].values
