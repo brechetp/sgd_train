@@ -42,7 +42,7 @@ if __name__ == '__main__':
     parser.add_argument('--momentum', type=float, default=0.95, help="the momentum for SGD")
     parser.add_argument('--lr_mode', '-lrm', default="manual", choices=["max", "hessian", "num_param", "manual"], help="the mode of learning rate attribution")
     parser.add_argument('--lr_step', '-lrs', type=int, default=30, help='if any, the step for the learning rate scheduler')
-    parser.add_argument('--lrs_gamma',  type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
+    parser.add_argument('--lr_gamma', '-lrg',  type=float, default=0.9, help='the gamma mult factor for the lr scheduler')
     parser.add_argument('--lr_update', '-lru', type=int, default=0, help='if any, the update of the learning rate')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
@@ -99,9 +99,11 @@ if __name__ == '__main__':
         try:
             average = args.average
             nepoch=args.nepochs
+            lr = args.learning_rate
             checkpoint = torch.load(args.checkpoint, map_location=device)
             args.__dict__.update(checkpoint['args'].__dict__)
             args.nepochs=nepoch
+            args.learning_rate = lr
 
         except RuntimeError as e:
             print('Error loading the checkpoint at {}'.format(e))
@@ -327,15 +329,17 @@ if __name__ == '__main__':
     parameters = list(model.parameters())
 
     optimizer = torch.optim.SGD(
-        #parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
-        parameters, lr=learning_rate, momentum=args.momentum, nesterov=True, weight_decay=args.weight_decay,
+        parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
+        # parameters, lr=learning_rate, momentum=args.momentum, nesterov=True, weight_decay=args.weight_decay,
     )
 
     print("Optimizer: {}".format(optimizer), file=logs, flush=True)
     #lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
     lr_scheduler = None
     if args.lr_step>0:
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lrs_gamma)
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_gamma)
+    elif args.lr_step==-1:
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=args.lr_gamma)
     last_lr = learning_rate
 
     if 'optimizer' in checkpoint.keys():

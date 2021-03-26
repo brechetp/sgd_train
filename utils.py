@@ -783,10 +783,13 @@ def cast(s):
 
         return val
 
-    is_tuple = len(s.split(',')) > 1
+    is_tuple = len(s.split(',')) > 1 and s[0] == '('
+    is_list = len(s.split(',')) > 1 and s[0] == '['
 
     if is_tuple:
-        val = tuple( cast_num(n.strip().lstrip('(').rstrip(')')) for n in s.split(',') if len(n) > 0)
+        val = tuple( cast_num(n.strip('()')) for n in s.split(',') if len(n.strip('()')) > 0)
+    elif is_list:
+        val = list(cast_num(n.strip('[]')) for n in s.split(',') if len(n.strip('[]')) > 0)
     else:
         if s == 'True':
             val = True
@@ -805,150 +808,29 @@ def parse_layer_args(layer_args_string):
     kwargs = {}
     args = []
     for idx, c in enumerate(layer_args_string):
-        if  c == '(':
+        if  c == '(' or c == '[':
             d += 1
-        elif c == ')':
+        elif c == ')' or c == ']':
             d -= 1
-        else:
-            if idx == len(layer_args_string)-1:  # last character
-                buff.append(c)
-            if (d == 0 and c == ',') or idx == len(layer_args_string)-1:
-                # end of argument
-                buff = ''.join(buff).strip()
-                if key:
-                    kwargs[key] =  cast(buff)
-                else:
-                    args.append(cast(buff))
-                buff = []
-                key = ''
-            elif c == '=':
-                key = ''.join(buff).strip()
-                buff = []
+        # else:
+        if idx == len(layer_args_string)-1:  # last character
+            buff.append(c)
+        if (d == 0 and c == ',') or idx == len(layer_args_string)-1:
+            # end of argument
+            buff = ''.join(buff).strip()
+            if key:
+                kwargs[key] =  cast(buff)
             else:
-                buff.append(c)
+                args.append(cast(buff))
+            buff = []
+            key = ''
+        elif c == '=':
+            key = ''.join(buff).strip()
+            buff = []
+        else:
+            buff.append(c)
 
     return args, kwargs
-
-
-
-
-def parse_log_file(fname, *args):
-    '''Parse an entry in a log file (at the beginning of it), of the form
-    str_=k
-    with k an integer.
-    Return k
-'''
-
-    ret = {}
-    process = Popen(['head', '-n', '40', fname], stdout=PIPE, stderr=PIPE)
-    #pr_grep = Popen(['grep', arg], stdin=process.stdout, stdout=PIPE)
-    head_lines = process.communicate()[0].decode('utf-8').strip().splitlines()
-
-    all_args = dict()
-
-    def correct_arg_n(arg_n):
-        return arg_n.find(',') == -1 and arg_n.find(')') == -1 and arg_n.find(':') == -1
-
-    for line in head_lines:  # for all lines at the top of the file
-
-        kv = line.split('=')  # should be key=value
-        #lst = line.split(',')  # some lines can have two elements separated by ','
-
-        if len(kv) == 2 and correct_arg_n(kv[0]):
-            all_args[kv[0].strip()] = kv[1].strip()  # only strings
-
-
-    for arg_n, arg_t in args:
-
-        val_str = all_args.get(arg_n, None)
-        if val_str:  # if we found something
-            if arg_t is int:
-                try:
-                    ret[arg_n] = int(val_str)
-                except BaseException as e:
-                    print(e)
-                    continue
-            elif arg_t is bool:
-                ret[arg_n] = True if val_str == 'True' else False
-            elif arg_t is str:
-                ret[arg_n] = val_str
-            elif arg_t is float:
-                try:
-                    ret[arg_n] = float(val_str)
-                except BaseException as e:
-                    print(e)
-                    continue
-            else:
-                print('Not implemented type parse:', arg_t)
-                raise NotImplementedError
-        else:
-            #print('Warning could not find {} in log file'.format(arg_n))
-            pass
-
-    return ret
-
-def update_dict(dict_, acc, idx, N_tot, N_epochs):
-    '''returns a structured dict from python dictionary object'''
-    for key, val in dict_.items():
-        # first level of depth
-        if key == 'lr':
-            continue
-        elif isinstance(val,dict):
-            # requires a second depth
-            acc[key] = dict()
-
-            update_dict(val, acc[key], idx, N_tot, N_epochs)
-        elif isinstance(val, list):
-
-            if not key in acc.keys():
-                acc[key] = np.empty((N_tot, N_epochs))
-
-
-            acc[key][idx, :min(len(val), N_epochs)] = val[:min(N_epochs, len(val))]
-        else:
-            acc[key] = np.empty(N_tot)
-            acc[key][idx]  = val
-
-    #return acc
-    return
-
-
-def get_chkpts(path_checkpoints):
-
-    files = [name for name in os.listdir(path_checkpoints) if os.path.isfile(os.path.join(path_checkpoints, name))]
-    re_run = re.compile(r'checkpoint-r(\d+).*?\.pth')
-    chkpts = [re_run.match(file_) for file_ in files if re_run.match(file_)]
-    id_chkpts = [int(chkpt.group(1)) for chkpt in chkpts]
-    id_run =max(id_chkpts)
-    return chkpts, id_run
-
-
-
-def gather_stats(chkpts, path_checkpoints, average, id_run, device, args):
-
-    global start_epoch
-
-
-    if average:
-        id_run += 1  # increment for a new computation
-        checkpoint = dict()  # reset the checkpoint (i.e. do not continue)
-
-
-    stats_prev = list()
-
-    epoch_min = None
-    for idx, file_ in enumerate(chkpts):
-        chkpt = torch.load(join_path(path_checkpoints, file_.group(0)), map_location=device)
-        stats_prev.append(chkpt['stats'])
-        epoch_min = min(epoch_min,chkpt['epochs']) if not epoch_min is None else chkpt['epochs']
-        del chkpt
-    N_prev = len(stats_prev)
-    epoch_min = start_epoch + args.nepochs if not average else epoch_min
-    N = N_prev + 1
-    stats_acc = dict()
-    for idx in range(N_prev):
-        stats = stats_prev[idx]
-        update_dict(stats, stats_acc, idx, N, epoch_min)
 
 def print_cuda_memory_usage(device, logs=sys.stdout, epoch=None):
     '''The current usage of GPU memory'''

@@ -127,6 +127,8 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
     #losses.describe().to_csv(os.path.join(dirname, 'losses_describe.csv'))
     #errors.describe().to_csv(os.path.join(dirname, 'errors_describe.csv'))
     #f, axes = plt.subplots(1, 2, figsize=[10., 5.])
+    quant = quant.drop("val", level="set", errors="ignore", axis=1)
+    stats_ref = stats_ref.drop("val", level="set", errors="ignore", axis=0)
 
     palette=sns.color_palette(n_colors=N_sets)
 
@@ -517,7 +519,7 @@ if __name__ == '__main__':
 
 
 
-        models = glob.glob(os.path.join(os.path.dirname(directory.rstrip(os.sep)), "checkpoint.pth"))
+        models = glob.glob(os.path.join(directory, "checkpoint.pth"))
 
 
         for f in models:
@@ -530,8 +532,6 @@ if __name__ == '__main__':
             d_m = os.path.dirname(f)  # the directory
             entry_dirs = glob.glob(os.path.join(d_m, "**", "entry_*"), recursive=True) # all the entries
             roots = set(list(map(os.path.dirname, entry_dirs)))  # the names of the
-
-
 
             # root is e.g. fraction-2, and will be the root of the figure
             for root in roots:
@@ -547,7 +547,8 @@ if __name__ == '__main__':
                     chkpt_id = map(os.path.basename, f_checkpoints)
                     chkpt_id = [int(x.split('.')[0].split('_')[-1]) for x in  chkpt_id]
                     chkpt_id.sort(reverse=True)
-                    if len(chkpt_id) == 0:
+                    n_draws = len(chkpt_id)
+                    if n_draws == 0:
                         continue
                     id_max = chkpt_id[0]
                     f =os.path.join(entry_dir, f"checkpoint_draw_{id_max}.pth")
@@ -559,7 +560,25 @@ if __name__ == '__main__':
 
                     #idx_draw = int(name.split('_')[-1])
                     chkpt = torch.load(f, map_location=device)
-                    quant = chkpt['quant'].sort_index(axis=1).dropna()#.min(axis=0)
+                    quant = chkpt['quant'].sort_index(axis=1).loc[:, Idx[:, :, :n_draws]]
+                    # max_epoch = len(quant.dropna(how='all'))
+                    if "val" in quant.columns.get_level_values("set"):
+                        quant = quant.dropna(how='any')
+                    else:
+                        quant = quant.dropna(how='all')
+
+                        # # move val to test values
+                        # quant.drop("test", level="set", axis=1, inplace=True)
+                        # set_idx = quant.columns.names.index("set")
+                        # nlevels = quant.columns.nlevels
+                        # new_set_lvl = [s.replace("val", "test") for s in quant.columns.get_level_values(set_idx)]
+                        # # new_stat.sort()
+                        # levels = [quant.columns.get_level_values(i) if i != set_idx else new_set_lvl for i in range(nlevels)]
+                        # cols = pd.MultiIndex.from_arrays(levels, names=quant.columns.names)
+                        # quant.columns = cols
+                        # quant.sort_index(axis=1, inplace=True)
+                        # quant = quant.dropna(how='all')#.min(axis=0)
+                    # quant = quant[:max_epoch].dopna(how='any', subset=[("err", "test")] )#.min(axis=0)
                     if quant.empty:  # empty dataframe
                         continue
                     # sort by train loss
@@ -580,7 +599,6 @@ if __name__ == '__main__':
                     names = ['layer'] + quant.columns.names[:2]
 
                     columns_min = pd.MultiIndex.from_product(list(quant.columns.levels[:2]), names=quant.columns.names[:2])
-                    n_draws = chkpt["draws"]
                     index = pd.Index(np.arange(1, n_draws+1), name="draw")
                     quant_min =  pd.DataFrame(index=index, columns = columns_min, dtype=np.float)
 

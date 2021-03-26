@@ -1254,7 +1254,7 @@ if __name__ == '__main__':
             return out, Y
 
 
-        def eval_class_mult(out_class, mult, only_loss=False):
+        def eval_class_mult(out_class, mult, out=None):
 
 
             #classifier.eval()
@@ -1272,14 +1272,14 @@ if __name__ == '__main__':
                     y = y.to(device)
                     loss = ce_loss(x, y)  # LxTxB
                     loss_tot = (idx * loss_tot + loss.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean loss
-                    if not only_loss:
-                        err = zero_one_loss(x, y)
-                        err_tot = (idx * err_tot + err.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean err
+                    err = zero_one_loss(x, y)
+                    err_tot = (idx * err_tot + err.mean(dim=-1).detach().cpu().numpy()) / (idx+1)  # mean err
                     # loss_hidden_tot = (idx * loss_hidden_tot + loss_hidden.mean(dim=1).detach().cpu().numpy()) / (idx+1)
                     #break
 
 
-            if only_loss:
+            if out is not None:
+                out['error'] = err_tot
                 return loss_tot
             else:
                 return loss_tot, err_tot
@@ -1294,9 +1294,9 @@ if __name__ == '__main__':
                     # loss, error  = eval_epoch(classifier, train_loader)
                     # return loss
 
-                def eval_mult(mult, out_class):
+                def eval_mult(mult, out_class, out):
                     #global out_class
-                    loss  = eval_class_mult(out_class, mult, only_loss=True)#epoch(classifier, train_loader, with_error=False)
+                    loss  = eval_class_mult(out_class, mult, out)#epoch(classifier, train_loader, with_error=False)
                     return loss
 
                 # def eval_mult_prime(mult):  # the  derivative w.r.t M of the loss
@@ -1324,16 +1324,21 @@ if __name__ == '__main__':
                 if args.optim_mult:
                     # mult0 = 1
                     # res = minimize(eval_mult, mult0, args=out_class, method='BFGS')#l, options={'disp': True})
+                    out={'error': 0}
                     #res = minimize_scalar(eval_mult, args=(out_class,), bounds=(0, 2**(N_L+2-l)), method='bounded')
-                    res = minimize_scalar(eval_mult, args=(out_class,), method='brent')
+                    res = minimize_scalar(eval_mult, args=(out_class,out), method='brent')
                     #res = minimize_scalar(eval_mult, args=(out_class,), method='golden')
                     print(res, file=logs)
                     mult = res.x
-                #else:
-                #    mult=2**(N_L+1-l) #res.multult0
+                    loss = res.fun
+                    error = out['error']
+                else:
+                    mult=2**(N_L+1-l) #res.multult0
+                    classifier.mult = torch.tensor(mult, device=device, dtype=dtype)
+                    loss, error = eval_epoch(classifier, train_loader)
 
-                classifier.mult = torch.tensor(mult, device=device, dtype=dtype)
-                loss, error = eval_epoch(classifier, train_loader)
+                # classifier.mult = torch.tensor(mult, device=device, dtype=dtype)
+                # loss, error = eval_epoch(classifier, train_loader)
                 df_mult.loc[t, l] = mult
 
 

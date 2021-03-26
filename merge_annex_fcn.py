@@ -593,13 +593,13 @@ if __name__ == '__main__':
         # for root in roots:
         f_model = None
         #f_checkpoints  = glob.glob(os.path.join(directory, "**", "checkpoint_entry_*.pth"), recursive=True)
-        models = glob.glob(os.path.join(directory, "**", "checkpoint-r1.pth"), recursive=True)
+        models = glob.glob(os.path.join(directory, "**", "checkpoint.pth"), recursive=True)
         #entries = glob.glob(os.path.join(root, "entry_*"), recursive=False)
 
         for f in models:
             model = torch.load(f, map_location=device)
             try:
-                quant_model = model["quant"].dropna()
+                quant_model = model["quant"].dropna().drop("val", axis=1, level="set", errors="ignore")
             except:
                 cols = pd.MultiIndex.from_arrays([['train', 'train'], ['loss', 'err']])
                 quant_model = pd.DataFrame([model['stats']['loss_train'], model['stats']['loss_test']], columns=cols)

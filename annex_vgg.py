@@ -48,7 +48,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_update', '-lru', type=int, default=0, help='if any, the update of the learning rate')
     parser.add_argument('--lr_mode', '-lrm', default="num_param_tot", choices=["max", "hessian", "num_param_tot", "num_param_train", "manual"], help="the mode of learning rate attribution")
     parser.add_argument('--lr_step', '-lrs', type=int, default=30, help='the number of epochs for the lr scheduler')
-    parser.add_argument('--lrs_gamma',  type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
+    parser.add_argument('--lr_gamma',  '-lrg', type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
@@ -89,8 +89,10 @@ if __name__ == '__main__':
     if args.checkpoint is not None:  # continuing previous computation
         try:
             nepochs = args.nepochs
+            lr = args.learning_rate
             checkpoint = torch.load(args.checkpoint, map_location=device)
             args.__dict__.update(checkpoint['args'].__dict__)
+            args.learning_rate = lr
             args.nepochs = nepochs
             cont = True  # continue the computation
         except RuntimeError:
@@ -389,7 +391,7 @@ if __name__ == '__main__':
         #parameters, lr=args.learning_rate, momentum=0.95
 
 
-    sets = ['train', 'val', 'test']
+    sets = ['train', 'test']
     stats = ['loss', 'err']
     #layers = np.arange(1, 1+1)#classifier.n_layers)  # the different layers, forward order
     draws = np.arange(1, start_id_draw+args.draws)  # the different tries
@@ -428,6 +430,7 @@ if __name__ == '__main__':
                 'args': args,
             'args_model': args_model,
                 'optimizer': optimizer.state_dict(),
+            'lr_scheduler': lr_scheduler.state_dict() if lr_scheduler is not None else None,
                 'epochs': epoch,
             'draws': id_draw if stop else id_draw-1,
                     }
@@ -493,11 +496,14 @@ if __name__ == '__main__':
 
 
         classifier = models.classifiers.ClassifierVGGAnnex(model, F=fraction, idx_entry=args.entry_layer).to(device)
-        classifier.features.requires_grad_(False)
+        # classifier.features.requires_grad_(False)
         #learning_rate = min(args.max_learning_rate, rule_of_thumb, find_learning_rate(classifier, train_loader))
         #learning_rate = rule_of_thumb
         #learning_rate = get_lr(classifier)
         #print('Learning rate: {}'.format(learning_rate), file=logs, flush=True)
+        if 'classifier' in checkpoint.keys():
+            classifier.load_state_dict(checkpoint['classifier'])
+
         params_tot = []
         learning_rates = []
         params_feat = [p for p in classifier.features.parameters() if p.requires_grad]
@@ -525,7 +531,13 @@ if __name__ == '__main__':
             classifier.features = nn.DataParallel(classifier.features)
             #classifier.new_sample()
             #model.classifier = nn.DataParallel(model.classifier
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lrs_gamma)  # reduces the learning rate by half every 20 epochs
+        if args.lr_step>0:
+            lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_gamma)  # reduces the learning rate by half every 20 epochs
+        elif args.lr_step==-1:
+            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=args.lr_gamma)
+        else:
+            lr_scheduler=None
+
 
         if id_draw ==  start_id_draw:
 
@@ -542,7 +554,7 @@ if __name__ == '__main__':
             if 'optimizer' in checkpoint.keys():
                 optimizer.load_state_dict(checkpoint['optimizer'])
 
-            if 'lr_scheduler' in checkpoint.keys():
+            if lr_scheduler and 'lr_scheduler' in checkpoint.keys():
                 lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
 
 
@@ -600,7 +612,7 @@ if __name__ == '__main__':
                 # assert err == 0
                 # epoch += 1
                 # continue
-            loss_val, err_val = eval_epoch(classifier, val_loader)
+            loss_val, err_val = eval_epoch(classifier, test_loader)
 
             if epoch == start_epoch:
                 loss_min = loss_val
@@ -612,8 +624,8 @@ if __name__ == '__main__':
             #ones = torch.tensor(1. - (err_train == 0), device=device, dtype=dtype)  # mask for the individual losses
 
 
-            separated =  err_train == 0
-            #frozen = err_train == 0 and not frozen # will test with frozen network next time, prevent from freezing twice in a row
+            separated =  frozen and err_train == 0
+            frozen = err_train == 0 and not frozen # will test with frozen network next time, prevent from freezing twice in a row
 
             #if frozen:
             #    print("Freezing the next iteration", file=logs)
@@ -623,8 +635,8 @@ if __name__ == '__main__':
             quant.loc[pd.IndexSlice[epoch, ('train', 'err', id_draw)]] =  err_train
             quant.loc[pd.IndexSlice[epoch, ('train', 'loss', id_draw)]] =  loss_train
 
-            quant.loc[pd.IndexSlice[epoch, ('val', 'err', id_draw)]] =  err_val
-            quant.loc[pd.IndexSlice[epoch, ('val', 'loss', id_draw)]] =  loss_val
+            quant.loc[pd.IndexSlice[epoch, ('test', 'err', id_draw)]] =  err_val
+            quant.loc[pd.IndexSlice[epoch, ('test', 'loss', id_draw)]] =  loss_val
 
 
             if loss_val < loss_min:
@@ -634,7 +646,7 @@ if __name__ == '__main__':
             elif loss_val > loss_min:
                 cnt += 1
 
-            stop = ((cnt > args.early_stoping > 0)
+            stop = (separated
                     or epoch > start_epoch + args.nepochs
                     )
                 #err_tot_test = np.zeros(args.ntry)
@@ -662,13 +674,15 @@ if __name__ == '__main__':
 
             if args.lr_step >0:
                 lr_scheduler.step()
+            elif args.lr_step==-1:
+                lr_scheduler.step(loss_train)
 
 
 
             #print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
-            print('try: {}, ep {}, loss (val): {:g} ({:g}), err (val): {:g} ({:g}) {}'.format(
-                id_draw, epoch, quant.loc[epoch, ('train', 'loss', id_draw)], quant.loc[epoch, ('val', 'loss', id_draw)],
-                err_train,  quant.loc[epoch, ('val', 'err', id_draw)], ' (separated)' if separated else ''),
+            print('try: {}, ep {}, loss (test): {:g} ({:g}), err (test): {:g} ({:g}) {}'.format(
+                id_draw, epoch, quant.loc[epoch, ('train', 'loss', id_draw)], quant.loc[epoch, ('test', 'loss', id_draw)],
+                err_train,  quant.loc[epoch, ('test', 'err', id_draw)], ' (separated)' if separated else ''),
                 file=logs, flush=True)
 
             #end_layer = 1
@@ -678,10 +692,7 @@ if __name__ == '__main__':
 
             if epoch % 5 ==0 or stop:  # we save every 5 epochs
 
-                loss_test, err_test = eval_epoch(classifier, test_loader)
 
-                quant.loc[pd.IndexSlice[epoch, ('test', 'err', id_draw)]] =  err_test
-                quant.loc[pd.IndexSlice[epoch, ('test', 'loss', id_draw)]] =  loss_test
 
                 quant_reset = quant.reset_index()
                 quant_plot = pd.melt(quant_reset, id_vars='epoch')

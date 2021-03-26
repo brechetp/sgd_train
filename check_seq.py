@@ -42,12 +42,12 @@ if __name__ == '__main__':
     parser.add_argument('--dataroot', '-droot', default='./data/', help='the root for the input data')
     parser.add_argument('--name', default='check_seq', type=str, help='the name of the experiment')
     parser.add_argument('--vary_name', nargs='*', default=None, help='the name of the parameter to vary in the name (appended)')
-    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-3, help='manual learning rate')
+    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-2, help='manual learning rate')
     parser.add_argument('--momentum', type=float, default=0.95, help="the momentum for SGD")
     parser.add_argument('--lr_update', '-lru', type=int, default=0, help='if any, the update of the learning rate')
     parser.add_argument('--lr_mode', '-lrm', default="manual", choices=["max", "hessian", "num_param_tot", "num_param_train", "manual"], help="the mode of learning rate attribution")
-    parser.add_argument('--lr_step', '-lrs', type=int, default=30, help='if any, the step for the learning rate scheduler')
-    parser.add_argument('--lrs_gamma',  type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
+    parser.add_argument('--lr_step', '-lrs', type=int, default=50, help='if any, the step for the learning rate scheduler')
+    parser.add_argument('--lr_gamma', '-lrg', type=float, default=0.9, help='the gamma mult factor for the lr scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=400, help='the number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
@@ -73,7 +73,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu', 1)
+
+
     #device = torch.device('cpu')
 
 
@@ -83,8 +85,12 @@ if __name__ == '__main__':
     if args.checkpoint is not None:  # continuing previous computation
         try:
             nepochs = args.nepochs
+            lr = args.learning_rate
+            lrs = args.lr_step
             checkpoint = torch.load(args.checkpoint, map_location=device)
             args.__dict__.update(checkpoint['args'].__dict__)
+            args.learning_rate = lr
+            args.lr_step = lrs
             args.nepochs = nepochs
             cont = True  # continue the computation
         except RuntimeError:
@@ -163,6 +169,7 @@ if __name__ == '__main__':
                                                              imresize =imresize,
                                                                              normalize=False,
                                                              )
+    print('Transform: {}'.format(train_dataset.transform), file=logs, flush=True)
     train_loader, size_train,\
         val_loader, size_val,\
         test_loader, size_test  = utils.get_dataloader( train_dataset,
@@ -342,7 +349,7 @@ if __name__ == '__main__':
         elif args.lr_mode == "num_param_tot":  # rule of thumb
             lr = rule_of_thumb
         elif args.lr_mode == "num_param_train":
-            args.lr_mode = rule_of_thumb_train
+            lr =  rule_of_thumb_train
         elif args.lr_mode == "manual":
             lr = args.learning_rate
         elif args.lr_mode == "max":
@@ -361,7 +368,9 @@ if __name__ == '__main__':
     )
     lr_scheduler = None
     if args.lr_step>0:
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lrs_gamma)
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_gamma)
+    elif args.lr_step==-1:
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=args.lr_gamma)
 
     print('Optimizer: {}'.format(optimizer), file=logs, flush=True)
     if 'lr_scheduler' in checkpoint.keys() and checkpoint['lr_scheduler'] is not None:
@@ -400,13 +409,13 @@ if __name__ == '__main__':
     if 'quant' in checkpoint.keys():
         quant.update(checkpoint['quant'])
 
-    stats = {
-        'num_parameters': num_parameters,
-        'num_samples_train': num_samples_train,
-    }
+    # stats = {
+        # 'num_parameters': num_parameters,
+        # 'num_samples_train': num_samples_train,
+    # }
 
-    if 'stats' in checkpoint.keys():
-        stats.update(checkpoint['stats'])
+    # if 'stats' in checkpoint.keys():
+        # stats.update(checkpoint['stats'])
 
     classes = torch.arange(num_classes).view(1, -1).to(device)  # the different possible classes
 
@@ -575,6 +584,9 @@ if __name__ == '__main__':
 
         if args.lr_step>0:
             lr_scheduler.step()
+        elif args.lr_step==-1:
+            lr_scheduler.step(loss_train.min())
+
         #end_layer = 1
         #quant_limit = quant.loc[pd.IndexSlice[:, quant.columns.get_level_values('layer').isin(range(1, end_layer+1))]]
         #fig, ax = plt.sub

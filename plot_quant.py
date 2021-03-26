@@ -44,7 +44,7 @@ try:
 except:
     def tqdm(x): return x
 
-def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=True):
+def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=True, split=False):
 
     global table_format
 
@@ -155,8 +155,16 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
     # else:
     xlabels=[str(i) for i in range(N_L)]
 
-    palette=sns.color_palette(n_colors=len(keys))  # the two experiments
-    fig, axes = plt.subplots(2, 1, figsize=(4, 8), sharex=False)
+    # if len(keys) <= 2:
+        # palette=sns.color_palette(n_colors=2)[2-len(keys):] # the two experiments
+    # else:
+    if "dropout" in keys:
+        keys = keys[::-1]
+
+    palette=sns.color_palette(n_colors=len(keys))[::-1]
+
+    if not split:
+        fig, axes = plt.subplots(2, 1, figsize=(4, 8), sharex=False)
     # sns.set(font_scale=1,rc={"lines.linewidth":3})
 
     # fig.suptitle("{} {}".format('VGG' if is_vgg else 'FCN', dataset.upper()))
@@ -171,7 +179,10 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
             if stat == "error" and setn=="train":
                 continue
             # axes[k] = rp.axes[j,i]
-            ax = axes.flatten()[k]
+            if split:
+                fig, ax = plt.subplots(1, 1, figsize=(4, 4), sharex=False)
+            else:
+                ax = axes.flatten()[k]
 
             df_plot = quant.loc[:, Idx[:, stat, setn, :]].min(axis=0).to_frame(name="value")
             lp = sns.lineplot(
@@ -198,10 +209,6 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
             lp.set(xticks=range(0, len(xlabels)))
             # rp.set_xticklabels(xlabels)
             # rp.axes[0,0].locator_params(axis='x', nbins=len(xlabels))
-            # rp.axes[0,1].locator_params(axis='x', nbins=len(xlabels))
-
-            # if k == 1:
-            # if k==1:
             lp.set_xticklabels(xlabels)#, rotation=40*(is_vgg))
             # else:
                 # lp.set_xticklabels(len(xlabels)*[None])
@@ -217,35 +224,30 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
 
                 ax.axline((0,quant_ref[stat, setn][0]), slope=0, ls=":", zorder=2, c='g')
                 # data_ref.index = pd.Index(range(len(data_ref)))
-                # sns.lineplot(
-                    # data=data_ref,  # repeat the datasaet N_L times
                     # ax=ax,
-                    # # x=range(len(data_ref)),
-                    # # y="value",
-                    # # xc np.tile(np.linspace(1, N_L, num=N_L), 2),
-                    # # x='',
-                    # # hue='r',
-                    # # color='red',
-                    # palette=['red'],
-                    # # style='set',
-                    # # x='index',
-                    # # dashes=True,
-                    # legend=False,
-                    # # y="value"
-                # )
+            if split:
+                if k == 1:
+                    labels=keys + ["ref."]
+                    fig.legend(handles=ax.lines, labels=labels,
+                              # title="Exp.",
+                               loc="upper right", borderaxespad=0, bbox_to_anchor=(0.9,0.9))#, bbox_transform=fig.transFigure)
 
-                # for ax in ax.lines[-1:]:  # the last two
-                    # ax.set_linestyle('--')
+                # fig.tight_layout()
+                plt.margins()
+                plt.savefig(fname=os.path.join(output_root, f"{setn}_{stat}.pdf"), bbox_inches='tight')
+
             k += 1
-
 
     # fig.subplots_adjust(top=0.85)
     # if is_vgg:
-    labels=keys + ["Ref."]
-    fig.legend(handles=ax.lines, labels=labels, title="Exp.",  loc="upper right", borderaxespad=0, bbox_to_anchor=(0.9,0.9))#, bbox_transform=fig.transFigure)
-    fig.tight_layout()
-    plt.margins()
-    fig.savefig(fname=os.path.join(output_root, "train_loss_test_error.pdf"), bbox_inches='tight')
+    if not split:
+        labels=keys + ["ref."]
+        fig.legend(handles=ax.lines, labels=labels,
+                  # title="Exp.",
+                   loc="upper right", borderaxespad=0, bbox_to_anchor=(0.9,0.9))#, bbox_transform=fig.transFigure)
+        fig.tight_layout()
+        # plt.margins()
+        fig.savefig(fname=os.path.join(output_root, "train_loss_test_error.pdf"), bbox_inches='tight')
     k=0
     # sns.set(font_scale=1,rc={"lines.linewidth":3})
 
@@ -322,8 +324,10 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
 
     # fig.subplots_adjust(top=0.85)
     # if is_vgg:
-    labels=keys + ["Ref."]
-    fig.legend(handles=ax.lines, labels=keys, title="Exp.", loc="upper right", bbox_to_anchor=(0.9,0.9),borderaxespad=0)#, bbox_transform=fig.transFigure)
+    labels=keys + ["ref."]
+    fig.legend(handles=ax.lines, labels=keys,
+               #title="Exp.",
+               loc="upper right", bbox_to_anchor=(0.9,0.9),borderaxespad=0)#, bbox_transform=fig.transFigure)
     plt.margins()
     plt.savefig(fname=os.path.join(output_root, "error_train.pdf"), bbox_inches='tight')
 
@@ -435,6 +439,7 @@ if __name__ == '__main__':
     parser.add_argument('--table_format', choices=["wide", "long"], default="long")
     parser.add_argument('--experiments', nargs='*', default=['A', 'B'], help='whitelist for the experiments to cat')
     parser.add_argument('dirs', nargs='*', help='the directories to process')
+    parser.add_argument('--split', action='store_true', help='split the err/loss figures in two')
     parser.set_defaults(cpu=False)
 
 
@@ -501,16 +506,18 @@ if __name__ == '__main__':
                 quant.index.rename("draw", inplace=True)
                 quant.sort_index(axis=1, inplace=True)
 
-                if 'B' in experiment:
+                if 'B' in experiment or 'dropout' in experiment:
                     stats_ref = quant.loc[1, Idx[:, :, 0]]  #layer = 0 is the reference
                     quant = quant.loc[:, Idx[:, :, 1:]]  # only keep layers > 0
 
-                levels = list([[experiment]] +[quant.columns.get_level_values(i).unique() for i in range(quant.columns.nlevels)])
-                quant.columns = pd.MultiIndex.from_product(levels,
-                                                        names= ['experiment'] + quant.columns.names,
-                                                        )
-                # quant.columns = pd.MultiIndex.from_arrays([quant.columns.get_level_values(1), quant.columns.get_level_values(0), level_width],
-                                                        # quant.columns.names[::-1] + ['width'],
+                ncol = len(quant.columns)
+                levels = list([ncol*[experiment]] +[quant.columns.get_level_values(i) for i in range(quant.columns.nlevels)])
+                # quant.columns = pd.MultiIndex.from_product(levels,
+                                                        # names= ['experiment'] + quant.columns.names,
+                                                        # )
+                quant.columns = pd.MultiIndex.from_arrays(levels,
+                                        names= ['experiment'] + quant.columns.names,
+                                          )
                                                         # )
 
                 df_bundle = pd.concat([df_bundle, quant], ignore_index=False, axis=1)
@@ -521,7 +528,7 @@ if __name__ == '__main__':
 
             df_bundle.sort_index(axis=1, inplace=True)
             if not df_bundle.empty:
-                process_df(df_bundle, root, stats_ref, args_model=args_model)
+                process_df(df_bundle, root, stats_ref, args_model=args_model, split=args.split)
 
     sys.exit(0)
 
