@@ -37,16 +37,16 @@ if __name__ == '__main__':
     parser.add_argument('--dataroot', '-dr', default='./data/', help='the root for the input data')
     parser.add_argument('--output_root', '-oroot', type=str, help='output root for the results')
     parser.add_argument('--name', default = '', type=str, help='the name of the experiment')
-    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-2, help='leraning rate')
+    parser.add_argument('--learning_rate', '-lr', type=float, default=1e-3, help='leraning rate')
     parser.add_argument('--weight_decay', type=float, default=0, help="the weight decay for SGD (L2 pernalization)")
     parser.add_argument('--momentum', type=float, default=0.95, help="the momentum for SGD")
     parser.add_argument('--lr_mode', '-lrm', default="manual", choices=["max", "hessian", "num_param", "manual"], help="the mode of learning rate attribution")
-    parser.add_argument('--lr_step', '-lrs', type=int, default=30, help='if any, the step for the learning rate scheduler')
+    parser.add_argument('--lr_step', '-lrs', type=int, default=0, help='if any, the step for the learning rate scheduler')
     parser.add_argument('--lr_gamma', '-lrg',  type=float, default=0.9, help='the gamma mult factor for the lr scheduler')
     parser.add_argument('--lr_update', '-lru', type=int, default=0, help='if any, the update of the learning rate')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
-    parser.add_argument('--depth', '-L', type=int, default=3, help='the number of layers for the network')
+    parser.add_argument('--depth', '-L', type=int, default=5, help='the number of layers for the network')
     parser_normalize = parser.add_mutually_exclusive_group()
     parser_normalize.add_argument('--normalize', action='store_true', dest='normalize',  help='normalize the input')
     parser_normalize.add_argument('--no-normalize', action='store_false', dest='normalize', help='normalize the input')
@@ -89,9 +89,11 @@ if __name__ == '__main__':
             # args.id_run = 2
 
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     dtype = torch.float
     num_gpus = torch.cuda.device_count()
+    gpu_index = random.choice(range(num_gpus)) if num_gpus > 0  else 0
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu', gpu_index)
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 
@@ -329,8 +331,8 @@ if __name__ == '__main__':
     parameters = list(model.parameters())
 
     optimizer = torch.optim.SGD(
-        parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
-        # parameters, lr=learning_rate, momentum=args.momentum, nesterov=True, weight_decay=args.weight_decay,
+        # parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
+        parameters, lr=learning_rate, momentum=args.momentum, nesterov=True, weight_decay=args.weight_decay,
     )
 
     print("Optimizer: {}".format(optimizer), file=logs, flush=True)
@@ -475,7 +477,8 @@ if __name__ == '__main__':
 
         for idx, (x, y) in enumerate(train_loader):
 
-            optimizer.zero_grad()
+            if args.gd_mode ==  "stochastic":
+                optimizer.zero_grad()
             x = x.to(device)
             y = y.to(device, dtype=torch.long)
             #age = age.to(device, dtype)
@@ -491,10 +494,13 @@ if __name__ == '__main__':
             stats[1] = zero_one_loss(out, y).item()
             #pred = model(x, is_man)
             stats_train = ((idx * stats_train) + stats) / (idx+1)
-            if not frozen:
+            if not frozen and args.gd_mode == "stochastic":
                 loss.backward()
                 optimizer.step()
 
+        if args.gd_mode == "full":
+            optimizer.step()
+            optimizer.zero_grad()
         stats_test = eval_epoch(model, test_loader)
 
         if epoch == start_epoch:  # first epoch

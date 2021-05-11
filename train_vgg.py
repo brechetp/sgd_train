@@ -1,5 +1,6 @@
 
 import torch
+import random
 import numpy as np
 import pandas as pd
 import os
@@ -41,7 +42,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataroot', '-droot', default='./data/', help='the root for the input data')
     parser.add_argument('--num_wokers', '-j', type=int, default=4, help='num of processor workers for loading the data')
     parser.add_argument('--name', default='vgg', type=str, help='the name of the experiment')
-    parser.add_argument('--learning_rate', '-lr', type=float, nargs='*', default=[5e-3], help='leraning rate')
+    parser.add_argument('--learning_rate', '-lr', type=float, nargs='*', default=[5e-3], help='learning rate')
     parser.add_argument('--weight_decay', type=float, default=5e-4, help="the weight decay for SGD (L2 pernalization)")
     parser.add_argument('--momentum', type=float, default=0.9, help="the momentum for SGD")
     parser.add_argument('--lr_mode', '-lrm', default="max", choices=["max", "hessian", "num_param", "manual"], help="the mode of learning rate attribution")
@@ -74,14 +75,17 @@ if __name__ == '__main__':
     parser.set_defaults(process=True)
     parser.add_argument('--tol', type=float, default=0, help="the tolerance in error rate for stoping")
     #parser.add_argument('--fract_val', type=float, default=0.10, help="the fraction of training samples to use for validation")
-    parser.add_argument('--early_stoping', type=int, default=15, help="the delay in epochs to wait for early stoping")
+    parser.add_argument('--min_epochs', type=int, default=0, help='the minimum number of epochs to train for')
+    parser.add_argument('--early_stoping', type=int, default=0, help="the delay in epochs to wait for early stoping")
     parser.add_argument('--augment', action='store_true', help="the delay in epochs to wait for early stoping")
 
 
 
     args = parser.parse_args()
 
-    device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
+    num_gpus = torch.cuda.device_count()
+    gpu_index = random.choice(range(num_gpus)) if num_gpus > 0  else 0
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu', gpu_index)
     #device = torch.device('cpu')
 
     if  len(args.learning_rate) != 2:
@@ -95,7 +99,6 @@ if __name__ == '__main__':
         args.name = utils.get_name(args)
 
     dtype = torch.float
-    num_gpus = torch.cuda.device_count()
 
     if args.checkpoint is not None:
         try:
@@ -156,10 +159,10 @@ if __name__ == '__main__':
     feature_extract=False #args.feature_extract
     model, input_size = models.pretrained.initialize_model(args.model, pretrained=False, feature_extract=feature_extract, num_classes=NUM_CLASSES)
 
-    if torch.cuda.device_count() > 1:
-        print("Let's use", torch.cuda.device_count(), "GPUs!", file=logs, flush=True)
+    # if torch.cuda.device_count() > 1:
+        # print("Let's use", torch.cuda.device_count(), "GPUs!", file=logs, flush=True)
         # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
-        model.features = nn.DataParallel(model.features)
+        # model.features = nn.DataParallel(model.features)
         #model.classifier = nn.DataParallel(model.classifier)
 
 
@@ -449,6 +452,7 @@ if __name__ == '__main__':
 
     stop = False
     epoch = start_epoch
+    MIN_EPOCH = args.min_epochs
     previous=False
     separated=False
     #tol = arg.tol
@@ -516,11 +520,11 @@ if __name__ == '__main__':
                 loss.backward()
                 optimizer.step()
 
-        loss_val, err_val = eval_epoch(model, val_loader)
+        loss_test, err_test = eval_epoch(model, test_loader)
 
         if epoch == start_epoch:  # first epoch
-            loss_min = loss_val
-            err_min = err_val
+            loss_min = loss_test
+            err_min = err_test
 
         epoch += 1 if not frozen else 0
 
@@ -531,11 +535,11 @@ if __name__ == '__main__':
         #err_train_val = np.zeros(args.ntry)
         #err_train_hidden  = np.zeros(args.ntry)
         #err_hidden_val  = np.zeros(args.ntry)
-        quant.loc[epoch, ('val', 'err')] = err_val
-        quant.loc[epoch, ('val', 'loss')] = loss_val
+        quant.loc[epoch, ('test', 'err')] = err_test
+        quant.loc[epoch, ('test', 'loss')] = loss_test
 
         separated =  frozen and err_train == 0
-        frozen = err_train == 0  and not frozen # will test with frozen network next time, prevent from freezing twice in a row
+        frozen = err_train == 0  and not frozen and epoch > MIN_EPOCH# will test with frozen network next time, prevent from freezing twice in a row
 
         if frozen:
             print("Freezing the next iteration", file=logs, flush=True)
@@ -552,27 +556,27 @@ if __name__ == '__main__':
 
         #last_min += 1
 
-        if loss_val < loss_min:
-            loss_min = loss_val
-            chkpt_min_loss = get_checkpoint()
-            cnt_loss = 0
-        elif loss_val > loss_min:
-            cnt_loss += 1
+        # if loss_test < loss_min:
+            # loss_min = loss_test
+            # chkpt_min_loss = get_checkpoint()
+            # cnt_loss = 0
+        # elif loss_test > loss_min:
+            # cnt_loss += 1
 
-        if err_val < err_min:
-            err_min = err_val
-            chkpt_min_err = get_checkpoint()
-            cnt_err = 0
-        elif err_val > err_min:
-            cnt_err += 1
+        # if err_test < err_min:
+            # err_min = err_test
+            # chkpt_min_err = get_checkpoint()
+            # cnt_err = 0
+        # elif err_test > err_min:
+            # cnt_err += 1
 
-        stop = (err_val <=args.tol
-                or (cnt_loss >= args.early_stoping  > 0)
-                or (cnt_err >= args.early_stoping  > 0)
-                or separated
+        stop = (#err_test <=args.tol
+                # or (cnt_loss >= args.early_stoping  > 0)
+                # or (cnt_err >= args.early_stoping  > 0)
+                separated
                 or epoch > start_epoch + args.nepochs) # no improvement over wait epochs or total of 400 epochs
-        #stats['err_val'].append(err_val/idx)
-        #stats['loss_val'].append(loss_val)
+        #stats['err_test'].append(err_test/idx)
+        #stats['loss_test'].append(loss_test)
         #stats['loss_hidden_train'].append(loss_hidden_tot)
         #stats['loss_hidden_val'].append(loss_hidden_val)
 
@@ -580,9 +584,9 @@ if __name__ == '__main__':
 
 
 
-        print('ep {}, train loss (err) {:g} ({:g}), val loss (err) {:g} ({:g})'.format(
-        epoch, quant.loc[epoch, ('train', 'loss')], quant.loc[epoch, ('train', 'err')], quant.loc[epoch, ('val', 'loss')], quant.loc[epoch, ('val', 'err')]),
-        #stats['loss_val']['ce'][-1], stats['loss_val']['zo'][-1]),
+        print('ep {}, train loss (err) {:g} ({:g}), test loss (err) {:g} ({:g})'.format(
+        epoch, quant.loc[epoch, ('train', 'loss')], quant.loc[epoch, ('train', 'err')], quant.loc[epoch, ('test', 'loss')], quant.loc[epoch, ('test', 'err')]),
+        #stats['loss_test']['ce'][-1], stats['loss_test']['zo'][-1]),
         file=logs, flush=True)
 
         if args.lr_step>0:
@@ -616,11 +620,11 @@ if __name__ == '__main__':
 
             plt.close('all')
 
-            loss_test, err_test = eval_epoch(model, test_loader)
+            # loss_test, err_test = eval_epoch(model, test_loader)
             #err_train_hidden  = np.zeros(args.ntry)
             #err_hidden_val  = np.zeros(args.ntry)
-            quant.loc[epoch, ('test', 'err')] = err_test
-            quant.loc[epoch, ('test', 'loss')] = loss_test
+            # quant.loc[epoch, ('test', 'err')] = err_test
+            # quant.loc[epoch, ('test', 'loss')] = loss_test
             if args.save_model:  # we save every 5 epochs
                 save_checkpoint()
 
@@ -628,8 +632,8 @@ if __name__ == '__main__':
     logs.close()
     #logs_debug.close()
 
-    save_checkpoint(chkpt_min_loss, 'checkpoint_min_loss')
-    save_checkpoint(chkpt_min_err, 'checkpoint_min_err')
+    # save_checkpoint(chkpt_min_loss, 'checkpoint_min_loss')
+    # save_checkpoint(chkpt_min_err, 'checkpoint_min_err')
     #save_checkpoint()
     sys.exit(0)  # success
 

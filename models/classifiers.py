@@ -766,6 +766,7 @@ class ClassifierCopyFCN(nn.Module):
 
 
 
+
 class ClassifierFCN(nn.Module):
     '''The classifiers plugged into a FCN network'''
 
@@ -840,6 +841,43 @@ class ClassifierFCN(nn.Module):
         #return out
 
         return torch.cat(out)
+
+class CopyFCN(nn.Module):
+    '''A dummy copy of a FCN model to perform linear paths'''
+
+    def __init__(self, model):
+
+        for l in model.main: # for all the layers
+            self.main.append(copy.deepcopy(l))
+
+    def change_output_weights(self):
+
+        self.main[-1].weights[:, select] = 0  # the weights are laid out as input x output
+        self.main[1].bias[select] = 0
+
+
+    """
+    update of the weights that are "incomping"
+    """
+    def change_input_weights(self, idx):  # 0 means top, 1 means bottom
+
+
+
+        pass
+
+    """
+    Update the weights according to a path (i.e. list of points) in parameter space
+    """
+    def change_weights_path(self, path):
+        pass
+
+
+    """
+    """
+
+
+
+
 
 class ClassifierVGGAnnex(nn.Module):
 
@@ -1113,6 +1151,9 @@ class ClassifierFCNSimple(nn.Module):
         x=x.view(x.size(0), -1)
         out = self.network(x)
         return out
+
+
+
 
 
 class RandomSampler(nn.Module):

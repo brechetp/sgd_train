@@ -155,6 +155,8 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
     # else:
     xlabels=[str(i) for i in range(N_L)]
 
+    logstr = "_log" if args.yscale == "log" else ""
+
     # if len(keys) <= 2:
         # palette=sns.color_palette(n_colors=2)[2-len(keys):] # the two experiments
     # else:
@@ -216,13 +218,14 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
             # ylabel = stat if stat == "loss" else "error (%)"
             ax.set_xlabel("layer index l")
             ax.set_ylabel(None)
+            ax.set_yscale(args.yscale)
             # ax.tick_params(labelbottom=True)
 
 
             if quant_ref is not None:
                 # data_ref  = quant_ref[stat, setn].reset_index()
 
-                ax.axline((0,quant_ref[stat, setn][0]), slope=0, ls=":", zorder=2, c='g')
+                ax.axline((0,quant_ref[stat, setn][0]), (1, quant_ref[stat, setn][0]),  ls=":", zorder=2, c='g')
                 # data_ref.index = pd.Index(range(len(data_ref)))
                     # ax=ax,
             if split:
@@ -234,7 +237,8 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
 
                 # fig.tight_layout()
                 plt.margins()
-                plt.savefig(fname=os.path.join(output_root, f"{setn}_{stat}.pdf"), bbox_inches='tight')
+
+                plt.savefig(fname=os.path.join(output_root, f"{setn}_{stat}{logstr}.pdf"), bbox_inches='tight')
 
             k += 1
 
@@ -247,7 +251,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
                    loc="upper right", borderaxespad=0, bbox_to_anchor=(0.9,0.9))#, bbox_transform=fig.transFigure)
         fig.tight_layout()
         # plt.margins()
-        fig.savefig(fname=os.path.join(output_root, "train_loss_test_error.pdf"), bbox_inches='tight')
+        fig.savefig(fname=os.path.join(output_root, f"train_loss_test_error{logstr}.pdf"), bbox_inches='tight')
     k=0
     # sns.set(font_scale=1,rc={"lines.linewidth":3})
 
@@ -294,11 +298,12 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
             # ylabel = stat if stat == "loss" else "error (%)"
             ax.set_xlabel("layer index l")
             ax.set_ylabel(None)
+            ax.set_yscale(args.yscale)
 
             if quant_ref is not None:
                 # data_ref  = quant_ref[stat, setn].reset_index()
 
-                ax.axline((0,quant_ref[stat, setn][0]), slope=0, ls=":", zorder=2, c='g')
+                ax.axline((0,quant_ref[stat, setn][0]), (1,quant_ref[stat, setn][0]), ls=":", zorder=2, c='g')
                 # data_ref.index = pd.Index(range(len(data_ref)))
                 # sns.lineplot(
                     # data=data_ref,  # repeat the datasaet N_L times
@@ -329,7 +334,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
                #title="Exp.",
                loc="upper right", bbox_to_anchor=(0.9,0.9),borderaxespad=0)#, bbox_transform=fig.transFigure)
     plt.margins()
-    plt.savefig(fname=os.path.join(output_root, "error_train.pdf"), bbox_inches='tight')
+    plt.savefig(fname=os.path.join(output_root, f"error_train{logstr}.pdf"), bbox_inches='tight')
 
     if "B" in keys:
         df_B = quant["B"]
@@ -438,6 +443,7 @@ if __name__ == '__main__':
     #parser.add_argument('--end_layer', type=int, help='if set the maximum layer for which to compute the separation (forward indexing)')
     parser.add_argument('--table_format', choices=["wide", "long"], default="long")
     parser.add_argument('--experiments', nargs='*', default=['A', 'B'], help='whitelist for the experiments to cat')
+    parser.add_argument('--yscale', choices=["linear", "log"], default='linear', help='the scale for the y axis')
     parser.add_argument('dirs', nargs='*', help='the directories to process')
     parser.add_argument('--split', action='store_true', help='split the err/loss figures in two')
     parser.set_defaults(cpu=False)
@@ -528,7 +534,7 @@ if __name__ == '__main__':
 
             df_bundle.sort_index(axis=1, inplace=True)
             if not df_bundle.empty:
-                process_df(df_bundle, root, stats_ref, args_model=args_model, split=args.split)
+                process_df(df_bundle, root, stats_ref, args=args, args_model=args_model, split=args.split)
 
     sys.exit(0)
 

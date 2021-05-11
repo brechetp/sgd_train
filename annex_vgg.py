@@ -47,10 +47,11 @@ if __name__ == '__main__':
     parser.add_argument('--momentum', type=float, default=0.9, help="the momentum for SGD")
     parser.add_argument('--lr_update', '-lru', type=int, default=0, help='if any, the update of the learning rate')
     parser.add_argument('--lr_mode', '-lrm', default="num_param_tot", choices=["max", "hessian", "num_param_tot", "num_param_train", "manual"], help="the mode of learning rate attribution")
-    parser.add_argument('--lr_step', '-lrs', type=int, default=30, help='the number of epochs for the lr scheduler')
+    parser.add_argument('--lr_step', '-lrs', type=int, default=0, help='the number of epochs for the lr scheduler')
     parser.add_argument('--lr_gamma',  '-lrg', type=float, default=0.5, help='the gamma mult factor for the lr scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=1000, help='the number of epochs to train for')
+    parser.add_argument('--min_epochs', type=int, default=50, help='the minimum number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
@@ -79,12 +80,13 @@ if __name__ == '__main__':
     if  len(args.learning_rate) != 2:
         args.learning_rate = 2*[args.learning_rate[0]]
 
-    device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
     #device = torch.device('cpu')
 
 
     dtype = torch.float
     num_gpus = torch.cuda.device_count()
+    gpu_index = random.choice(range(num_gpus)) if num_gpus > 0  else 0
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu', gpu_index)
 
     if args.checkpoint is not None:  # continuing previous computation
         try:
@@ -525,11 +527,11 @@ if __name__ == '__main__':
         optimizer = torch.optim.SGD(params_tot, #parameters, lr=args.learning_rate, momentum=(args.gd_mode=='full') * 0 + (args.gd_mode =='stochastic')*0.95
                 momentum=args.momentum, nesterov=True, weight_decay=args.weight_decay)
 
-        if torch.cuda.device_count() > 1:
-            print("Let's use", torch.cuda.device_count(), "GPUs!", file=logs, flush=True)
-            # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
-            classifier.features = nn.DataParallel(classifier.features)
-            #classifier.new_sample()
+        # if torch.cuda.device_count() > 1:
+            # print("Let's use", torch.cuda.device_count(), "GPUs!", file=logs, flush=True)
+            # # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
+            # classifier.features = nn.DataParallel(classifier.features)
+            # #classifier.new_sample()
             #model.classifier = nn.DataParallel(model.classifier
         if args.lr_step>0:
             lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_gamma)  # reduces the learning rate by half every 20 epochs
@@ -561,6 +563,7 @@ if __name__ == '__main__':
         DO_SANITY_CHECK = False
         stop = False
         separated = False
+        MIN_EPOCH = args.min_epochs
         epoch = (start_epoch - 1) if DO_SANITY_CHECK else start_epoch
         frozen = False
         #ones = torch.ones(args.ntry, device=device, dtype=dtype) if args.ntry > 1 else torch.ones([])
@@ -612,10 +615,10 @@ if __name__ == '__main__':
                 # assert err == 0
                 # epoch += 1
                 # continue
-            loss_val, err_val = eval_epoch(classifier, test_loader)
+            loss_test, err_test = eval_epoch(classifier, test_loader)
 
             if epoch == start_epoch:
-                loss_min = loss_val
+                loss_min = loss_test
                 chkpt_min = get_checkpoint()
 
             epoch += 1 if not frozen else 0
@@ -625,7 +628,7 @@ if __name__ == '__main__':
 
 
             separated =  frozen and err_train == 0
-            frozen = err_train == 0 and not frozen # will test with frozen network next time, prevent from freezing twice in a row
+            frozen = err_train == 0 and not frozen and epoch > MIN_EPOCH # will test with frozen network next time, prevent from freezing twice in a row
 
             #if frozen:
             #    print("Freezing the next iteration", file=logs)
@@ -635,16 +638,16 @@ if __name__ == '__main__':
             quant.loc[pd.IndexSlice[epoch, ('train', 'err', id_draw)]] =  err_train
             quant.loc[pd.IndexSlice[epoch, ('train', 'loss', id_draw)]] =  loss_train
 
-            quant.loc[pd.IndexSlice[epoch, ('test', 'err', id_draw)]] =  err_val
-            quant.loc[pd.IndexSlice[epoch, ('test', 'loss', id_draw)]] =  loss_val
+            quant.loc[pd.IndexSlice[epoch, ('test', 'err', id_draw)]] =  err_test
+            quant.loc[pd.IndexSlice[epoch, ('test', 'loss', id_draw)]] =  loss_test
 
 
-            if loss_val < loss_min:
-                loss_min = loss_val
-                chkpt_min = get_checkpoint()
-                cnt = 0
-            elif loss_val > loss_min:
-                cnt += 1
+            # if loss_test < loss_min:
+                # loss_min = loss_test
+                # chkpt_min = get_checkpoint()
+                # cnt = 0
+            # elif loss_test > loss_min:
+                # cnt += 1
 
             stop = (separated
                     or epoch > start_epoch + args.nepochs

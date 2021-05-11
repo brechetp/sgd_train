@@ -1136,7 +1136,10 @@ if __name__ == '__main__':
             global path_output
 
             if fname is None:
-                fname = os.path.join(path_output, 'eval_copy.pth')
+                fname = 'eval_copy'
+            fname += '.pth'
+
+            fname = os.path.join(path_output, fname)
 
             if checkpoint is None:
                 checkpoint = get_checkpoint()
@@ -1285,8 +1288,9 @@ if __name__ == '__main__':
                 return loss_tot, err_tot
 
         #mult = 2**args.log_mult
+        loss_min = N_L*[None]
         for t in range(1, args.steps+1):
-            for l in range(1, N_L+1):
+            for l in range(N_L, 0, -1):
 
                 # def eval_mult(mult):
                     # global classifier
@@ -1354,14 +1358,21 @@ if __name__ == '__main__':
 
 
             if t % 20 ==0 or t==args.steps:
-                quant = quant.sort_index(axis=1)
-                df_mult = df_mult.sort_index(axis=1)
-                quant.to_csv(os.path.join(path_output, 'quant.csv'))
-                df_mult.to_csv(os.path.join(path_output, 'mult.csv'))
-                df_mult.describe().to_csv(os.path.join(path_output, 'mult_describe.csv'))
+                # if l == 1:
+                # if loss_min[l-1] is None or loss < loss_min[l-1]:
                 save_checkpoint()
-            #quant["error"] *= 100
-                process_df(quant, path_output, is_vgg=is_vgg)
+                    # print("new min at ", t, "for ", l, ":", loss)
+                    # loss_min[l-1] = loss
+
+
+            quant = quant.sort_index(axis=1)
+            df_mult = df_mult.sort_index(axis=1)
+            quant.to_csv(os.path.join(path_output, 'quant.csv'))
+            df_mult.to_csv(os.path.join(path_output, 'mult.csv'))
+            df_mult.describe().to_csv(os.path.join(path_output, 'mult_describe.csv'))
+            save_checkpoint()
+        #quant["error"] *= 100
+            process_df(quant, path_output, is_vgg=is_vgg)
             #end = err_train.max(axis=1).nonzero()[0].max() + 1  # requires _all_ the tries to be 0 to stop the computation, 1 indexed
             #if args.end_layer is not None:
             #    end = min(end, args.end_layer)

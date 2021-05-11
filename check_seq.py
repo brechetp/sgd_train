@@ -22,6 +22,7 @@ import torch.optim
 import torch
 import argparse
 import utils
+import nvgpu
 
 from sklearn.linear_model import LogisticRegression
 
@@ -50,6 +51,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_gamma', '-lrg', type=float, default=0.9, help='the gamma mult factor for the lr scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=400, help='the number of epochs to train for')
+    parser.add_argument('--min_epochs', type=int, default=0, help='the minimum number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
@@ -72,15 +74,18 @@ if __name__ == '__main__':
 
 
     args = parser.parse_args()
+    num_gpus = torch.cuda.device_count()
+    gpu_index = random.choice(range(num_gpus)) if num_gpus > 0  else 0
 
-    device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu', 1)
+    # gpu_info = sorted(nvgpu.gpu_info(), key=lambda x: x['mem_total'] - x['mem_used'], reverse=True)
+    # gpu_index = int(gpu_info[0]['index'])
+    device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu', gpu_index)
 
 
     #device = torch.device('cpu')
 
 
     dtype = torch.float
-    num_gpus = torch.cuda.device_count()
 
     if args.checkpoint is not None:  # continuing previous computation
         try:
@@ -167,7 +172,7 @@ if __name__ == '__main__':
     train_dataset, valid_dataset , test_dataset, num_chs = utils.get_dataset(dataset=args_model.dataset,
                                                           dataroot=args_model.dataroot,
                                                              imresize =imresize,
-                                                                             normalize=False,
+                                                            normalize= args_model.normalize if hasattr(args_model, 'normalize') else False,
                                                              )
     print('Transform: {}'.format(train_dataset.transform), file=logs, flush=True)
     train_loader, size_train,\
@@ -463,6 +468,7 @@ if __name__ == '__main__':
 
 
     DO_SANITY_CHECK = False
+    MIN_EPOCH = args.min_epochs
     stop = False
     separated = False
     epoch = (start_epoch - 1) if DO_SANITY_CHECK else start_epoch
@@ -496,7 +502,8 @@ if __name__ == '__main__':
                 #loss = ce_loss(out, y).mean()  # TxB
                 err += zero_one_loss(out,y).mean().detach().cpu().numpy()  # just check if the number of error is 0
             else:
-                optimizer.zero_grad()
+                if args.gd_mode == "stochastic":
+                    optimizer.zero_grad()
                 out_class = classifier(x)  # TxBxC,  # each output for each layer
                 loss = ce_loss(out_class, y)  # LxTxB
                 #loss_hidden = ce_loss(out_hidden, y)
@@ -507,7 +514,8 @@ if __name__ == '__main__':
                 if not frozen:  # if we have to update the weights
                     loss.mean(dim=-1).backward(ones)
                 # loss_hidden.mean(dim=1).backward(ones_hidden)
-                    optimizer.step()
+                    if args.gd_mode == "stochastic":
+                        optimizer.step()
                     #lr_scheduler.step()
 
         if epoch == start_epoch - 1:  # check if we have null training error (sanity check)
@@ -516,6 +524,10 @@ if __name__ == '__main__':
             epoch += 1
             continue
 
+        if args.gd_mode == "full":
+            optimizer.step()
+            optimizer.zero_grad()
+
         epoch += 1 if not frozen else 0
 
         err_min = err_train.min(axis=0)#max(axis=0)  # min over tries, max over layers (all layers have to have at least one try at 0)
@@ -523,7 +535,7 @@ if __name__ == '__main__':
 
 
         separated = frozen and err_min == 0
-        frozen = err_min == 0 and not frozen # will test with frozen network next time, prevent from freezing twice in a row
+        frozen = err_min == 0 and not frozen and epoch > MIN_EPOCH# will test with frozen network next time, prevent from freezing twice in a row
 
         if frozen:
             print("Freezing the next iteration", file=logs)
