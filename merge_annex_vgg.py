@@ -320,7 +320,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
     plt.savefig(fname=os.path.join(dirname, 'rel_plot.pdf'))
 
     fig=plt.figure()
-    df_reset = quant.notnull().reset_index()
+    df_reset = quant[quant.notnull()].reset_index()
     df_plot = pd.melt(df_reset, id_vars='draw')
     g = sns.relplot(
         data = df_plot,
@@ -524,7 +524,7 @@ if __name__ == '__main__':
 
         for f in models:
             model = torch.load(f, map_location=device)
-            quant_model = model["quant"].dropna()
+            quant_model = model["quant"]#.dropna()
             args_model = model["args"]
             idx_min = quant_model.idxmin(axis=0)["train", "loss"] # the epochs for each draw
             stats_ref =  quant_model.loc[idx_min]
