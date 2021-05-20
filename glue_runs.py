@@ -79,7 +79,7 @@ def process_checkpoint(checkpoint):
     process_df(quant, args.path_output)
     return
 
-def process_df(quant, dirname, args=None, args_model=None, save=True):
+def process_df(quant, dirname, args=None, args_model=None, save=True, quant_ref=None):
 
     global table_format
     Idx = pd.IndexSlice
@@ -128,7 +128,8 @@ def process_df(quant, dirname, args=None, args_model=None, save=True):
     df_plot_no_0 = df_plot.query('layer>0')
     df_plot_0 = df_plot.query('layer==0')
     #relative quantities
-    quant_ref = quant.loc[:, Idx[:, :, 0, :]].droplevel("layer", axis=1)  # for all the  widths and all the vars
+    if quant_ref is None:
+        quant_ref = quant.loc[:, Idx[:, :, 0, :]].droplevel("layer", axis=1)  # for all the  widths and all the vars
     # N_S = len(quant_ref.columns)  # should be the number of stats
     # quant_ref_val = quant_ref.iloc[np.repeat(np.arange(N_S), N_L)].values
     # quant_rel = (quant.loc[:, Idx[:, :, 1:]] - quant_ref_val).abs()
@@ -601,24 +602,38 @@ def process_csv(file_csv, args=None):
 
     idx = pd.IndexSlice
     quant = pd.read_csv(file_csv, header=[0,1,2,3], index_col=0)
-    layer_idx = quant.columns.names.index("layer")
-    width_idx = quant.columns.names.index("width")
-    nlevels = quant.columns.nlevels
-    # stat_idx = quant.columns.names.index("stat")
+    file_ref = os.path.join(os.path.dirname(file_csv), "ref.csv")
+    quant_ref = pd.read_csv(file_ref, header=[0,1,2], index_col=0)
+    for df in [quant, quant_ref]:
+        int_idx_lst = [] # the list for int fields
+        if "layer" in df.columns.names:
+            int_idx_lst += [df.columns.names.index("layer")]
+        width_idx = df.columns.names.index("width")
+        int_idx_lst += [width_idx]
+        stat_idx = df.columns.names.index("stat")
+        nlevels = df.columns.nlevels
+        # stat_idx = df.columns.names.index("stat")
 # dirname = os.path.dirname(file_csv)
-    for idx in [layer_idx,width_idx]:  # parse to int
-        if quant.columns.get_level_values(idx).dtype != int:  # 0 are the layers
-            new_lvl = list(map(int, quant.columns.get_level_values(idx)))
-            levels = [quant.columns.get_level_values(i) if i != idx else new_lvl for i in range(nlevels)]
-            cols = pd.MultiIndex.from_arrays(levels, names=quant.columns.names)
-            quant.columns = cols
+        for idx in int_idx_lst:  # parse to int
+            if df.columns.get_level_values(idx).dtype != int:  # 0 are the layers
+                new_lvl = list(map(int, df.columns.get_level_values(idx)))
+                levels = [df.columns.get_level_values(i) if i != idx else new_lvl for i in range(nlevels)]
+                cols = pd.MultiIndex.from_arrays(levels, names=df.columns.names)
+                df.columns = cols
+        if "err" in df.columns.get_level_values("stat"):
+            new_stat_lvl = [s.replace("err", "error") for s in df.columns.get_level_values(stat_idx)]
+            # new_stat.sort()
+            levels = [df.columns.get_level_values(i) if i != stat_idx else new_stat_lvl for i in range(nlevels)]
+            cols = pd.MultiIndex.from_arrays(levels, names=df.columns.names)
+            df.columns = cols
+        df.index.name = "var"
     # if quant.columns.get_level_values(width_idx).dtype != int:  # 0 are the layers
         # new_layer_lvl = list(map(int, quant.columns.get_level_values(width_idx)))
         # levels = [quant.columns.get_level_values(i) if i != layer_idx else new_layer_lvl for i in range(nlevels)]
         # cols = pd.MultiIndex.from_arrays(levels, names=quant.columns.names)
         # quant.columns = cols
     # uid = ''
-    process_df(quant, os.path.dirname(file_csv), '', args, save=False)
+    process_df(quant, os.path.dirname(file_csv),  args, save=False, quant_ref=quant_ref)
     return
 
 if __name__ == '__main__':
@@ -702,7 +717,14 @@ if __name__ == '__main__':
 
                 chkpt = torch.load(f, map_location=device)
                 # rid = int(''.join([c for c in os.path.basename(directory.rstrip('/')) if c.isdigit()]))
-                rid = int(''.join([c for c in f[f.find('run'):].split(os.sep)[0] if c.isdigit()]))
+
+                if f.find('run') != -1:
+                    fstr = "run"
+                elif f.find('var') != -1:
+                    fstr = "var"
+                else:
+                    raise ValueError("Neither 'var' nor 'run' in the name")
+                rid = int(''.join([c for c in f[f.find(fstr):].split(os.sep)[0] if c.isdigit()]))
                 f_model = os.path.join(os.path.dirname(os.path.dirname(f)), "checkpoint.pth")  # the original model
                 chkpt_model =torch.load(f_model, map_location=device)
 

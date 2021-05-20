@@ -1,5 +1,5 @@
 #for arg in 'softmax' 'no-softmax'; do srun -p cuda -x cuda01,cuda02 python train_mnist.py  --vary_name softmax --width 1000 --gd_mode 'full' "--$arg" & done
-[ -z $max_run ] && max_run=10;
+[ -z $max_run ] && max_run=5;
 dir='slurm/scripts'
 template='template.sbatch'
 sbname="B-m"

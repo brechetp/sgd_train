@@ -49,7 +49,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
     global table_format
 
     col_names = ["experiment", "stat", "set", "layer"]
-    quant =  utils.assert_col_order(quant, col_names, id_vars="run")
+    quant =  utils.assert_col_order(quant, col_names, id_vars="var")
     keys = list(quant.columns.levels[0].sort_values())
 
     output_root = os.path.join(dirname, f"merge_" + "_".join(keys))
@@ -80,7 +80,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
 
 
     df_reset = quant.reset_index()
-    df_plot = pd.melt(df_reset, id_vars='run')#.query("layer>0")
+    df_plot = pd.melt(df_reset, id_vars="var")#.query("layer>0")
     # df_plot_no_0 = df_plot.query('layer>0')
     # df_plot_0 = df_plot.query('layer==0')
     #relative quantities
@@ -98,7 +98,8 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
             # quant_ref_key = stats_ref.iloc[np.tile(np.arange(N_S).reshape(N_S, 1), (N_L_key)).ravel()].to_frame(name="value").droplevel("layer")
             # quant_ref_merge = pd.concat([quant_ref_merge, quant_ref_key])
 
-        stats_ref.columns = stats_ref.columns.droplevel('layer')
+        if "layer" in stats_ref.columns.names:
+            stats_ref.columns = stats_ref.columns.droplevel('layer')
         quant_ref = stats_ref.agg(['mean', 'count', 'std'])
         quant_ref.loc['se'] = quant_ref.loc['std'] / np.sqrt(quant_ref.loc['count'])
         quant_ref.loc['ci95'] = 1.96 * quant_ref.loc['se']  # 95% CI
@@ -190,7 +191,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
                 ax = axes.flatten()[k]
 
             df_plot = quant.loc[:, Idx[:, stat, setn, :]]#.min(axis=0).to_frame(name="value")
-            df_plot = pd.melt(df_plot.reset_index(), id_vars="run")
+            df_plot = pd.melt(df_plot.reset_index(), id_vars="var")
             lp = sns.lineplot(
                 #data=rel_losses.min(axis=0).to_frame(name="loss"),
                 # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="steps", columns=col_order).min(axis=0).to_frame(name="value"),
@@ -222,7 +223,6 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
             # ylabel = stat if stat == "loss" else "error (%)"
             ax.set_xlabel("layer index l")
             ax.set_ylabel(None)
-            ax.set_yscale(args.yscale)
             # ax.tick_params(labelbottom=True)
 
 
@@ -235,6 +235,8 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
                 ax.axhspan(y1, y2, facecolor='g', alpha=0.5)
                 # data_ref.index = pd.Index(range(len(data_ref)))
                     # ax=ax,
+            ax.set_yscale(args.yscale)
+
             if split:
                 if k == 1:
                     labels=keys + ["ref."]
@@ -276,7 +278,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
 
             # df_plot = quant.loc[:, Idx[:, stat, setn, :]].min(axis=0).to_frame(name="value")
             df_plot = quant.loc[:, Idx[:, stat, setn, :]]#.min(axis=0).to_frame(name="value")
-            df_plot = pd.melt(df_plot.reset_index(), id_vars="run")
+            df_plot = pd.melt(df_plot.reset_index(), id_vars="var")
             lp = sns.lineplot(
                 #data=rel_losses.min(axis=0).to_frame(name="loss"),
                 # data=df_plot_rel if not is_vgg else df_plot_rel.pivot(index="steps", columns=col_order).min(axis=0).to_frame(name="value"),
@@ -353,7 +355,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
         return
     n_draws = len(df_B.index)
     # vary_draw=copy.deepcopy(df_B)
-    df_B_plot = pd.melt(df_B.reset_index(), id_vars="run")
+    df_B_plot = pd.melt(df_B.reset_index(), id_vars="var")
     cp = sns.FacetGrid(
         data=df_B_plot,
         # hue="experiment",
@@ -503,23 +505,48 @@ if __name__ == '__main__':
 
                 # quant = chkpt['quant'].sort_index(axis=1)
                 quant = pd.read_csv(f, header=[0,1,2], index_col=0)
-                nlevels = quant.columns.nlevels
-                layer_idx = quant.columns.names.index("layer")
-                stat_idx = quant.columns.names.index("stat")
-                if quant.columns.get_level_values(layer_idx).dtype != int:  # 0 are the layers
-                    new_layer_lvl = list(map(int, quant.columns.get_level_values(layer_idx)))
-                    levels = [quant.columns.get_level_values(i) if i != layer_idx else new_layer_lvl for i in range(nlevels)]
-                    cols = pd.MultiIndex.from_arrays(levels, names=quant.columns.names)
-                    quant.columns = cols
-                if "err" in quant.columns.get_level_values("stat"):
-                    new_stat_lvl = [s.replace("err", "error") for s in quant.columns.get_level_values(stat_idx)]
-                    # new_stat.sort()
-                    levels = [quant.columns.get_level_values(i) if i != stat_idx else new_stat_lvl for i in range(nlevels)]
-                    cols = pd.MultiIndex.from_arrays(levels, names=quant.columns.names)
-                    quant.columns = cols
 
-                quant.index.rename("run", inplace=True)
-                quant.sort_index(axis=1, inplace=True)
+                int_idx_lst = [] # the list for int fields
+                if "layer" in quant.columns.names:
+                    int_idx_lst += [quant.columns.names.index("layer")]
+                stat_idx = quant.columns.names.index("stat")
+                nlevels = quant.columns.nlevels
+                # stat_idx = quant.columns.names.index("stat")
+# dirname = os.path.dirname(file_csv)
+                            # quant.index.rename("var", inplace=True)
+                df_lst = [quant]
+                fn_ref = os.path.join(os.path.dirname(f), "ref.csv")
+                if os.path.isfile(fn_ref):
+                    stats_ref = pd.read_csv(fn_ref, header=[0,1], index_col=0)
+
+                if stats_ref is not None:
+                    df_lst += [stats_ref]
+
+
+                for df in df_lst:
+                    int_idx_lst = [] # the list for int fields
+                    if "layer" in df.columns.names:
+                        int_idx_lst += [df.columns.names.index("layer")]
+                    # width_idx = df.columns.names.index("width")
+                    # int_idx_lst += [width_idx]
+                    stat_idx = df.columns.names.index("stat")
+                    nlevels = df.columns.nlevels
+                    # stat_idx = df.columns.names.index("stat")
+# dirname = os.path.dirname(file_csv)
+                    for idx in int_idx_lst:  # parse to int
+                        if df.columns.get_level_values(idx).dtype != int:  # 0 are the layers
+                            new_lvl = list(map(int, df.columns.get_level_values(idx)))
+                            levels = [df.columns.get_level_values(i) if i != idx else new_lvl for i in range(nlevels)]
+                            cols = pd.MultiIndex.from_arrays(levels, names=df.columns.names)
+                            df.columns = cols
+                    if "err" in df.columns.get_level_values("stat"):
+                        new_stat_lvl = [s.replace("err", "error") for s in df.columns.get_level_values(stat_idx)]
+                        # new_stat.sort()
+                        levels = [df.columns.get_level_values(i) if i != stat_idx else new_stat_lvl for i in range(nlevels)]
+                        cols = pd.MultiIndex.from_arrays(levels, names=df.columns.names)
+                        df.columns = cols
+                    df.index.name = "var"
+                    df.sort_index(axis=1, inplace=True)
 
                 if 'B' in experiment or 'dropout' in experiment:
                     stats_ref = quant.loc[:, Idx[:, :, 0]]  #layer = 0 is the reference

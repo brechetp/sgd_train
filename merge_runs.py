@@ -100,7 +100,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
     if quant.columns.names != col_order:
         # the order is
         # perform pivot
-        quant = pd.melt(quant.reset_index(), id_vars="try").pivot(index="try", columns=col_order, values="value")
+        quant = pd.melt(quant.reset_index(), id_vars="var").pivot(index="var", columns=col_order, values="value")
     idx_order = ["stat", "set"]
     if stats_ref.index.names !=idx_order:
         stats_ref = stats_ref.reorder_levels(idx_order).sort_index(axis=0)
@@ -153,7 +153,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
     df_reset = quant.reset_index()
     df_plot = pd.melt(df_reset, id_vars='try')
     df_reset_rel = quant_rel.reset_index()
-    df_plot_rel = pd.melt(df_reset_rel, id_vars="try")
+    df_plot_rel = pd.melt(df_reset_rel, id_vars="var")
     rp = sns.relplot(
         #data = df_plot.query('layer > 0'),
         data=df_plot_rel,
@@ -237,7 +237,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
 
     sns.lineplot(
         #data=rel_losses.min(axis=0).to_frame(name="loss"),
-        data=df_plot_rel.query("stat=='loss'").pivot(index="try", columns=col_order).min(axis=0).to_frame(name="value"),
+        data=df_plot_rel.query("stat=='loss'").pivot(index="var", columns=col_order).min(axis=0).to_frame(name="value"),
         #hue="width",
         hue="set",
         hue_order=["train", "test"],
@@ -262,7 +262,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
 
     sns.lineplot(
         #data=rel_losses.min(axis=0).to_frame(name="loss"),
-        data=df_plot_rel.query("stat=='err'").pivot(index="try", columns=col_order).min(axis=0).to_frame(name="value"),
+        data=df_plot_rel.query("stat=='err'").pivot(index="var", columns=col_order).min(axis=0).to_frame(name="value"),
         #hue="width",
         hue="set",
         hue_order=["train", "test"],
@@ -314,7 +314,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
             # )
     # sns.lineplot(
         # #data=df_plot.stats_ref.query('stat=="err"').iloc[np.tile(np.arange(2), N_L)].reset_index(),  # repeat the datasaet N_L times
-        # data=df_plot.query('stat=="loss"').pivot(index="try", columns=col_order).min(axis=0).to_frame(name="value"),
+        # data=df_plot.query('stat=="loss"').pivot(index="var", columns=col_order).min(axis=0).to_frame(name="value"),
         # hue='set',
         # hue_order=["train", "test"],
         # ax=rp.axes[0,0],
@@ -329,7 +329,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
 
     # sns.lineplot(
         # #data=df_plot.stats_ref.query('stat=="err"').iloc[np.tile(np.arange(2), N_L)].reset_index(),  # repeat the datasaet N_L times
-        # data=df_plot.query('stat=="err"').pivot(index="try", columns=col_order).min(axis=0).to_frame(name="value"),
+        # data=df_plot.query('stat=="err"').pivot(index="var", columns=col_order).min(axis=0).to_frame(name="value"),
         # hue='set',
         # hue_order=["train", "test"],
         # ax=rp.axes[0,1],
@@ -358,7 +358,7 @@ def process_df(quant, dirname, stats_ref=None, args=None, args_model=None, save=
     #df_reset = quant.().reset_index()
     #df_plot = pd.melt(df_reset, id_vars='try')
     bp = sns.relplot(
-        data=df_plot.pivot(index="try", columns=col_order).min(axis=0).to_frame(name="value"),
+        data=df_plot.pivot(index="var", columns=col_order).min(axis=0).to_frame(name="value"),
         #col='log_mult',
         hue='set',
         hue_order=["train", "test"],
@@ -574,15 +574,26 @@ if __name__ == '__main__':
     def get_parent(path):
         return os.path.basename(os.path.dirname(path))
 
+    def parse_width(fname):
+        width_regexp = re.compile("W-\(\d\+\)")
+        found = width_regexp.find(width_regexp, fname)
+        return found[1]
+
+
+
 
     Idx = pd.IndexSlice
     common_dir = os.path.commonpath(args.dirs)
     path_merge = os.path.join(common_dir, 'merge')
-    fnames = glob.glob(os.path.join(common_dir, "**", "quant.csv"), recursive=True)
+    fnames = []
+    for dname in args.dirs:
+        fnames.extend(glob.glob(os.path.join(dname, "**", "quant.csv"), recursive=True))
+
     unique_ids = set(list(map(get_parent, fnames)))
     for uid in unique_ids:  # for every f2 etc experiments
         path_output = os.path.join(path_merge, uid)
-        df_merge = pd.DataFrame(index=pd.Index([], name="run"))
+        df_merge = pd.DataFrame(index=pd.Index([], name="var"))
+        df_ref_merge = pd.DataFrame(index=pd.Index([], name="var"))
         os.makedirs(path_output, exist_ok=True)
 
         for directory in args.dirs:
@@ -590,29 +601,33 @@ if __name__ == '__main__':
             id_fnames = glob.glob(os.path.join(directory, "**", uid, "quant.csv"), recursive=True)
 
 
-            for fn in id_fnames:
+            for fn in id_fnames: # for all variations
+                # width = parse_width(fn)
 
                 quant = read_csv(fn)
                 col_order = quant.columns.names
                 quant_min=quant.min(axis=0).to_frame(name=rid).transpose()
-                quant_min.index.name = "run"
+                quant_min.index.name = "var"
+                fn_ref = os.path.join(os.path.dirname(fn), "stats_ref.csv")
 
+                if os.path.isfile(fn_ref):
+                    quant_ref = pd.read_csv(fn_ref, index_col=[0,1]).transpose().sort_index(axis=1)
+                    # levels_ref = list([[width]] +quant_ref.columns.levels)
+                    # quant_ref.columns = pd.MultiIndex.from_product(levels_ref,
+                                                            # names= ['width'] + quant_ref.columns.names,
+                                                            # )
+                    quant_ref.index = [rid]
+                else:
+                    quant_ref = quant.loc[1, Idx[:, :, 0]].dropna().to_frame().transpose().droplevel("layer", axis=1)
+                    quant_ref.index = [rid]
 
 
 
 
                 df_merge = pd.concat([df_merge, quant_min], ignore_index=False, axis=0)
+                df_ref_merge = pd.concat([df_ref_merge, quant_ref], ignore_index=False, axis=0)
+
         df_merge.sort_index(axis=1, inplace=True)
+        df_ref_merge.sort_index(axis=1, inplace=True)
         df_merge.to_csv(os.path.join(path_output, 'min.csv'))
-                #log_mult = args_copy.log_mult#int(match.groups()[0])
-                #columns=pd.MultiIndex.from_product([[log_mult], layers, stats], names=names)
-                #epoch = checkpoint['epochs']
-#            nlevel = len(quant.columns.levels)
-
-                #level_width = C*[width]
-
-        #df, epochs, args_entry = process_subdir(d, device)
-        #process_df(df, d, args_entry, args_model)
-        #process_epochs(epochs, dirname=d)
-
-
+        df_ref_merge.to_csv(os.path.join(path_output, 'ref.csv'))

@@ -17,12 +17,21 @@ if __name__ == "__main__":
 
     filename  = "results/cifar10/210331/path/path.csv"
     df = pd.read_csv(filename, header=[0,1,2], index_col=[0,1])
-    split = False
+    split = True
     palette=sns.color_palette(n_colors=1)[::-1]
     Idx = pd.IndexSlice
     yscale = "linear"
     logstr = "log" if yscale == "log" else ""
     df_ref = None
+    df_ds = None
+    fref = os.path.join(os.path.dirname(filename), "ref.csv")
+    fds = os.path.join(os.path.dirname(filename), "ds.csv")
+    if os.path.isfile(fref):
+        df_ref = pd.read_csv(fref, index_col=[0,1], header=[0])['0']
+        df_ref.loc["error", :] *= 100
+    if os.path.isfile(fds):
+        df_ds = pd.read_csv(fds, index_col=[0,1], header=[0])['0']
+        df_ds.loc["error", :] *= 100
     # xlabels =
     output_root = "results/cifar10/210331/path"
     stat_idx = df.columns.names.index("stat")
@@ -33,9 +42,10 @@ if __name__ == "__main__":
         levels = [df.columns.get_level_values(i) if i != stat_idx else new_stat_lvl for i in range(nlevels)]
         cols = pd.MultiIndex.from_arrays(levels, names=df.columns.names)
         df.columns = cols
+    df.loc[:, Idx[:, "error"]] *= 100  # in %
 
     if not split:
-        fig, axes = plt.subplots(2, 1, figsize=(4, 8), sharex=False)
+        fig, axes = plt.subplots(1, 2, figsize=(4, 8), sharey=False)
 
     k = 0
     for i, stat in enumerate(["loss","error" ]):
@@ -88,16 +98,23 @@ if __name__ == "__main__":
             # ax.tick_params(labelbottom=True)
 
 
+            if df_ds is not None:
+                # data_ref  = quant_ref[stat, setn].reset_index()
+
+                ax.axline((0,df_ds[stat, setn]), (1, df_ds[stat, setn]),  ls=":", zorder=2, c='r')
+                # data_ds.index = pd.Index(range(len(data_ds)))
+                    # ax=ax,
             if df_ref is not None:
                 # data_ref  = quant_ref[stat, setn].reset_index()
 
-                ax.axline((0,df_ref[stat, setn][0]), (1, df_ref[stat, setn][0]),  ls=":", zorder=2, c='g')
+                ax.axline((0,df_ref[stat, setn]), (1, df_ref[stat, setn]),  ls=":", zorder=2, c='g')
                 # data_ref.index = pd.Index(range(len(data_ref)))
                     # ax=ax,
 
+
             if split:
                 if k == 1:
-                    labels= ["path"]
+                    labels= ["path", "D.S.", "ref."]
                     fig.legend(handles=ax.lines, labels=labels,
                               # title="Exp.",
                                loc="upper right", borderaxespad=0, bbox_to_anchor=(0.9,0.9))#, bbox_transform=fig.transFigure)
@@ -112,7 +129,7 @@ if __name__ == "__main__":
     # fig.subplots_adjust(top=0.85)
     # if is_vgg:
     if not split:
-        labels=["path"]
+        labels=["path", "D.S.", "ref."]
         fig.legend(handles=ax.lines, labels=labels,
                   # title="Exp.",
                    loc="upper right", borderaxespad=0, bbox_to_anchor=(0.9,0.9))#, bbox_transform=fig.transFigure)

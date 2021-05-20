@@ -51,7 +51,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_gamma', '-lrg', type=float, default=0.9, help='the gamma mult factor for the lr scheduler')
     parser.add_argument('--save_model', action='store_true', default=True, help='stores the model after some epochs')
     parser.add_argument('--nepochs', type=int, default=400, help='the number of epochs to train for')
-    parser.add_argument('--min_epochs', type=int, default=0, help='the minimum number of epochs to train for')
+    parser.add_argument('--min_epochs', type=int, default=100, help='the minimum number of epochs to train for')
     parser.add_argument('--batch_size', '-bs', type=int, default=100, help='the dimension of the batch')
     parser.add_argument('--debug', action='store_true', help='debug')
     parser.add_argument('--size_max', type=int, default=None, help='maximum number of traning samples')
@@ -392,7 +392,7 @@ if __name__ == '__main__':
     if 'optimizer' in checkpoint.keys():
         optimizer.load_state_dict(checkpoint['optimizer'])
 
-    if 'lr_scheduler' in checkpoint.keys():
+    if lr_scheduler is not None and 'lr_scheduler' in checkpoint.keys():
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
 
     start_epoch = 0

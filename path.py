@@ -48,7 +48,7 @@ class Path(object):
         """Connect the last two sparsified solutions"""
         pass
 
-def plot_path(path, sizes, dirname):
+def eval_path(path, sizes, dirname):
 
     global device
     os.makedirs(dirname, exist_ok=True)
@@ -63,7 +63,7 @@ def plot_path(path, sizes, dirname):
     K = 11
     lbdas = np.arange(1, K) / (K-1)
     index = pd.MultiIndex.from_product([range(len(path.points)), range(0, K-1)], names=["point", "t"])
-    stats = ['loss', 'err']
+    stats = ['loss', 'error']
     sets = ["train", "test"]
     names=['set', 'stat', 'try']
     tries = [1]
@@ -142,22 +142,42 @@ def plot_path(path, sizes, dirname):
 
             # model.to(torch.device('cpu'))
     stats.to_csv(os.path.join(dirname, f'path.csv'))
+
+def plot_path(stats, quant_ds, quant_ref,  dirname):
     # df_plot = pd.melt(stats.reset_index(), id_vars=["point", "t"], ignore_index=False)
     Idx = pd.IndexSlice
     # df_plot.index.name = "index"
-    for _set in ["train", "test"]:
-        for stat in ["loss", "err"]:
+    for setn in ["train", "test"]:
+        for stat in ["loss", "error"]:
         # df_plot = stats.loc[:, Idx[stat, :]].reset_index()
-            stats.plot(kind="line",
+            ax = stats.plot(kind="line",
             # sns.lineplot(
                 # data=df_plot,
-                y=(_set,stat)
+                y=(setn,stat)
                             )
         # )
+            ax.axline((0,quant_ref[stat, setn]), (1, quant_ref[stat, setn]),  ls=":", zorder=2, c='g')
+            ax.axline((0,quant_ds[stat, setn]), (1, quant_ds[stat, setn]),  ls=":", zorder=2, c='r')
 
-        plt.savefig(fname=os.path.join(dirname, f'path_{_set}_{stat}.pdf'), bbox_inches="tight")
+        plt.savefig(fname=os.path.join(dirname, f'path_{setn}_{stat}.pdf'), bbox_inches="tight")
     stats.to_csv(os.path.join(dirname, f'path.csv'))
     plt.close("all")
+
+
+
+def read_csv(fname):
+    stats = pd.read_csv(fname, header=[0,1,2], index_col=[0,1])
+    stat_idx = stats.columns.names.index("stat")
+    nlevels = stats.columns.nlevels
+    if "err" in stats.columns.get_level_values("stat"):
+        new_stat_lvl = [s.replace("err", "error") for s in stats.columns.get_level_values(stat_idx)]
+        # new_stat.sort()
+        levels = [stats.columns.get_level_values(i) if i != stat_idx else new_stat_lvl for i in range(nlevels)]
+        cols = pd.MultiIndex.from_arrays(levels, names=stats.columns.names)
+        stats.columns = cols
+        stats.to_csv(fname)
+
+    return stats
 
 
 
@@ -542,11 +562,21 @@ if __name__ == "__main__":
                                                        pin_memory=False)
     paths = dict()
     models = dict()
+    quant_ref = pd.DataFrame()
+    quant_ds = pd.DataFrame()
+    Idx = pd.IndexSlice
     for mid in [1, 2]:
 
         models[mid] = copy.deepcopy(utils.construct_FCN(archi_model))
         model = models[mid]
         fn_model =  f"results/cifar10/210331/var-{mid}/checkpoint.pth"
+        fn_ds = f"results/cifar10/210331/var-{mid}/ds-200-f2-min_optim-mult/eval_copy.pth"
+        chkpt_ds = torch.load(fn_ds, map_location=torch.device('cpu'))
+        quant = chkpt_ds["quant"]
+        quant_ref = pd.concat([quant_ref, quant.loc[1, Idx[0, :, :]].to_frame().transpose()], ignore_index=True, axis=0)
+        idx_max = quant.loc[:, Idx[1:, "loss", "train"]].idxmax(axis=1)
+        idx_ds = quant[idx_max].idxmin()
+        quant_ds = pd.concat([quant_ds, quant.loc[idx_ds[1][0], Idx[idx_ds.keys()[1][0], :, :]].to_frame().transpose()], ignore_index=True, axis=0)  # select the step and the layer that define the bound
         chkpt_model = torch.load(fn_model, map_location=torch.device('cpu'))
         model.load_state_dict(chkpt_model['model'])
         paths[mid] = Path(model)
@@ -574,11 +604,21 @@ if __name__ == "__main__":
             # model.to(torch.device('cpu'))
     #both paths are computed
 
+    quant_ds.index = [1,2]
+    quant_ref.index = [1,2]
+    quant_ds = quant_ds.mean().droplevel("layer")
+    quant_ref = quant_ref.mean().droplevel("layer")
     sizes = [l.in_features for l in solution.network if isinstance(l, nn.Linear)] + [solution.network[-1].out_features]
     connect_two_models(paths[1], models[1], models[2], sizes)
 
     paths[1].extend(paths[2])
-    plot_path(paths[1], sizes, dirname="results/cifar10/210331/path/")
+    dname = "results/cifar10/210331/path/"
+    quant_ds.to_csv(os.path.join(dname, "ds.csv"))
+    quant_ref.to_csv(os.path.join(dname, "ref.csv"))
+    # stats = eval_path(paths[1], sizes, dirname=dname)
+    stats = read_csv("results/cifar10/210331/path/path.csv")
+    plot_path(stats, quant_ds, quant_ref, dirname=dname)
+
 
 
 
