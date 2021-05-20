@@ -154,6 +154,7 @@ def process_df(quant, dirname, is_vgg=False, args=None, args_model=None, save=Tr
     df_plot_no_0 = df_plot.query('layer>0')
     df_plot_0 = df_plot.query('layer==0')
     #relative quantities
+    Idx = pd.IndexSlice
     quant_ref = quant.loc[1, Idx[:, :, 0]]
     N_S = len(quant_ref)
     quant_ref_val = quant_ref.iloc[np.repeat(np.arange(N_S), N_L)].values
@@ -652,8 +653,8 @@ if __name__ == '__main__':
     parser.add_argument('--ntry', type=int, default=10, help='The number of permutations to test')
     parser.add_argument('-R', '--remove', type=int, default=100, help='the number of neurons to remove at each layer')
     parser_model = parser.add_mutually_exclusive_group(required=True)
-    parser_model.add_argument('--model', nargs='*', help='path of the model to separate')
-    parser_model.add_argument('--root_model', nargs='*', help='path of the model to separate')
+    parser_model.add_argument('--model',  help='path of the model to separate')
+    # parser_model.add_argument('--root_model', nargs='*', help='path of the model to separate')
     parser_normalized = parser.add_mutually_exclusive_group()
     parser_normalized.add_argument('--normalized', action='store_true', dest='normalized',  help='normalized the input')
     parser_normalized.add_argument('--no-normalized', action='store_false', dest='normalized', help='normalized the input')
@@ -674,20 +675,25 @@ if __name__ == '__main__':
     parser.add_argument('--optim_mult', action="store_true", default=True, help="flag to search for best multiplication factor")
     parser.add_argument('--table_format', choices=["wide", "long"], default="long")
     parser.add_argument('--fraction', '-F', default=2, type=int, help='the removed neurons denominator')
+    parser.add_argument('--force', action="store_true", default=False, help="force the computation from 0")
     parser.set_defaults(cpu=False)
 
 
 
     args = parser.parse_args()
     table_format = args.table_format
+    num_gpus = torch.cuda.device_count()
+    gpu_index = random.choice(range(num_gpus)) if num_gpus > 0  else 0
 
-    device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
+    # device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu', gpu_index)
     #device = torch.device('cpu')
 
 
     dtype = torch.float
     num_gpus = torch.cuda.device_count()
 
+    checkpoint = None
     if args.checkpoint is not None:  # process the  previous computation
         try:
             checkpoint = torch.load(args.checkpoint, map_location=device)
@@ -695,7 +701,7 @@ if __name__ == '__main__':
             #args.nepochs = nepochs
             #cont = True  # continue the computation
             process_checkpoint(checkpoint)
-            sys.exit(0)
+            # sys.exit(0)
         except RuntimeError:
             print('Could not load the model')
 
@@ -812,115 +818,95 @@ if __name__ == '__main__':
 
     else:
 
-        if args.root_model is not None:
+        # if checkpoint is not None:
+            # args = checkpoint["args"]
 
-            lst_models = [glob.glob(os.path.join(rm, '**', 'checkpoint.pth'), recursive=True) for rm in args.root_model]
-        elif args.model is not None:
-            lst_models = [args.model]
+        # if args.root_model is not None:
+
+            # lst_models = [glob.glob(os.path.join(rm, '**', 'checkpoint.pth'), recursive=True) for rm in args.root_model]
+        # elif args.model is not None:
+            # lst_models = [args.model]
+        # else:
+            # raise NotImplementedError
+
+        # for m in [m for lst in lst_models for m in lst]:
+        checkpoint = dict()
+
+        #if os.path.isfile():
+
+        try:
+            checkpoint_model = torch.load(args.model, map_location=device)  # checkpoint is a dictionnary with different keys
+        except RuntimeError as e:
+            print('Error loading the model at {}'.format(e))
+        args_model = checkpoint_model['args']  # restore the previous arguments
+        #imresize = checkpoint_model.get('imresize', None)
+        log_fname = os.path.join(os.path.dirname(args.model), 'logs.txt')
+
+        if args.reset_random:
+            args.name += '_reset'
+        if args.optim_mult:
+            args.name += '_optim-mult'
+        path_output = os.path.join(args_model.output_root, args_model.name, args.name)
+
+        if hasattr(args_model, 'model') and args_model.model.find('vgg') != -1:
+            is_vgg=True
+            NUM_CLASSES = utils.get_num_classes(args.dataset)
+            model, _ = models.pretrained.initialize_model(args_model.model,
+                                                pretrained=False,
+                                                feature_extract=False,
+                                                num_classes=NUM_CLASSES)
+            model.n_layers = utils.count_hidden_layers(model)
+            PrunedClassifier = models.classifiers.ClassifierCopyVGG
+            args.normalized=True
+
+
         else:
-            raise NotImplementedError
+            is_vgg=False
+            archi = utils.parse_archi(log_fname)
+            model = utils.construct_FCN(archi)
+            PrunedClassifier = models.classifiers.ClassifierCopyFCN
 
-        for m in [m for lst in lst_models for m in lst]:
-            checkpoint = dict()
 
-            #if os.path.isfile():
-
+        transform= utils.parse_transform(log_fname)
+    # Logs
+        train_dataset, valid_dataset, test_dataset, num_chs = utils.get_dataset(dataset=args_model.dataset,
+                                                            dataroot=args_model.dataroot,
+                                                                                tfm=transform,
+                                                                                normalize=args.normalized,
+                                                                                #augment=False,
+                                                                #imresize =imresize,
+                                                                )
+        train_loader, size_train,\
+            val_loader, size_val,\
+            test_loader, size_test  = utils.get_dataloader( train_dataset,
+                                                            valid_dataset,
+                                                            test_dataset,
+                                                            batch_size =args_model.batch_size,
+                                                            size_max=args_model.size_max,
+                                                            collate_fn=None,
+                                                            pin_memory=True,
+                                                            num_workers=4)
+        if not args.reset_random:
             try:
-                checkpoint_model = torch.load(m, map_location=device)  # checkpoint is a dictionnary with different keys
+                new_keys = map(lambda x:x.replace('module.', ''), checkpoint_model['model'].keys())
+                checkpoint_model['model'] = OrderedDict(zip(list(new_keys), checkpoint_model['model'].values()))
+                #for key in state_dict.keys():
+                    #new_key = key.replace('module.', '')
+
+                model.load_state_dict(checkpoint_model['model'])
             except RuntimeError as e:
-                print('Error loading the model at {}'.format(e))
-            args_model = checkpoint_model['args']  # restore the previous arguments
-            #imresize = checkpoint_model.get('imresize', None)
-            log_fname = os.path.join(os.path.dirname(m), 'logs.txt')
-
-            if args.reset_random:
-                args.name += '_reset'
-            if args.optim_mult:
-                args.name += '_optim-mult'
-            path_output = os.path.join(args_model.output_root, args_model.name, args.name)
-
-            if hasattr(args_model, 'model') and args_model.model.find('vgg') != -1:
-                is_vgg=True
-                NUM_CLASSES = utils.get_num_classes(args.dataset)
-                model, _ = models.pretrained.initialize_model(args_model.model,
-                                                   pretrained=False,
-                                                   feature_extract=False,
-                                                   num_classes=NUM_CLASSES)
-                model.n_layers = utils.count_hidden_layers(model)
-                PrunedClassifier = models.classifiers.ClassifierCopyVGG
-                args.normalized=True
-
-
-            else:
-                is_vgg=False
-                archi = utils.parse_archi(log_fname)
-                model = utils.construct_FCN(archi)
-                PrunedClassifier = models.classifiers.ClassifierCopyFCN
-
-
-            transform= utils.parse_transform(log_fname)
-        # Logs
-            train_dataset, valid_dataset, test_dataset, num_chs = utils.get_dataset(dataset=args_model.dataset,
-                                                                dataroot=args_model.dataroot,
-                                                                                    tfm=transform,
-                                                                                    normalize=args.normalized,
-                                                                                    #augment=False,
-                                                                    #imresize =imresize,
-                                                                    )
-            train_loader, size_train,\
-                val_loader, size_val,\
-                test_loader, size_test  = utils.get_dataloader( train_dataset,
-                                                               valid_dataset,
-                                                               test_dataset,
-                                                               batch_size =args_model.batch_size,
-                                                               size_max=args_model.size_max,
-                                                               collate_fn=None,
-                                                               pin_memory=True,
-                                                               num_workers=4)
-            if not args.reset_random:
-                try:
-                    new_keys = map(lambda x:x.replace('module.', ''), checkpoint_model['model'].keys())
-                    checkpoint_model['model'] = OrderedDict(zip(list(new_keys), checkpoint_model['model'].values()))
-                    #for key in state_dict.keys():
-                        #new_key = key.replace('module.', '')
-
-                    model.load_state_dict(checkpoint_model['model'])
-                except RuntimeError as e:
-                    print("Can't load mode (error {})".format(e))
-            # else: # not a file, should be a vgg name
-
-                # checkpoint = dict()
-
-                # dataset = args.dataset
-                # args.output_root = utils.get_output_root(args)
-                # args.name += "-control"
-                # if args.optim_mult:
-                    # args.name += '_optim-mult'
-                # args.name = utils.get_name(args)
-
-                # path_output = os.path.join(args.output_root, args.name)
-                # train_dataset, test_dataset, num_chs = utils.get_dataset(dataset=args.dataset,
-                                                                    # dataroot=args.dataroot,
-                                                                        # )
-
-                # train_loader, size_train,\
-                    # val_loader, size_val,\
-                    # test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset, batch_size =args.batch_size, ss_factor=1, size_max=args.size_max, collate_fn=None, pin_memory=False)
-
-                # num_classes = len(train_dataset.classes) if args.dataset != 'svhn' else 10
-                # imsize = next(iter(train_loader))[0].size()[1:]
-                # input_dim = imsize[0]*imsize[1]*imsize[2]
-
-
-                # min_width = max_width = args.width
-
-
-                # NUM_CLASSES = utils.get_num_classes(args.dataset)
-                # model, input_size = models.pretrained.initialize_model(, pretrained=not args.reset_random, feature_extract=False, num_classes=NUM_CLASSES)
+                print("Can't load mode (error {})".format(e))
 
 
 
 
+        fn_chkpt = os.path.join(path_output, "eval_copy.pth")
+        if os.path.isfile(fn_chkpt):
+            try:
+                checkpoint = torch.load(fn_chkpt, map_location=device)
+                args.__dict__.update(checkpoint['args'].__dict__)
+            except:
+                print("Can't load model ", fn_chkpt)
 
 
 
@@ -930,7 +916,7 @@ if __name__ == '__main__':
 
 
         if not args.debug:
-            logs = open(os.path.join(path_output, 'logs_eval.txt'), 'w')
+            logs = open(os.path.join(path_output, 'logs_eval.txt'), 'a')
         else:
             logs = sys.stdout
 #     logs = None
@@ -942,20 +928,6 @@ if __name__ == '__main__':
 
         for k, v in vars(args).items():
             print("%s= %s" % (k, v), file=logs, flush=True)
-
-
-        #imresize = (256, 256)
-        #imresize=(64,64)]
-
-        #model = models.cnn.CNN(1)
-
-
-
-
-        #min_width = int(args.coefficient *math.sqrt(size_train)+0.5)
-        #max_width = int(3*args.coefficient *math.sqrt(size_train)+0.5)
-        #model = models.classifiers.FCN3(input_dim=input_dim, num_classes=num_classes, min_width=min_width, max_width=max_width)
-
 
 
 
@@ -980,38 +952,6 @@ if __name__ == '__main__':
         #summary(model,  [imsize, (1,)])
         #model.apply(models.cnn.init_weights)
 
-
-
-
-
-
-        #print('Linear classifier: {}'.format(str(classifier)), file=logs)
-        #parameters = [ p for p in model.parameters() if not feature_extraction or p.requires_grad ]
-        #parameters = classifier.network.parameters()
-        #if len(args.learning_rate) <= 2:
-        #    lr_range = 2*args.learning_rate if len(args.learning_rate) == 1 else args.learning_rate
-            #lrs = np.linspace(lr_range[0], lr_range[1], classifier.n_layers)
-    #     lrs = np.geomspace(lr_range[0], lr_range[1], classifier.n_layers)
-        #elif len(args.learning_rate) == classifier.n_layers:
-        #    lrs  = args.learning_rate
-    # else:
-    #     raise ValueError('Parameter learning_rate not understood (n_layers ={}, #lr = {})'.format(classifier.n_layers, len(args.learning_rate)))
-
-    # param_list = [{'params': param, 'lr': lr} for param, lr in zip(parameters, lrs)]
-
-
-        #optimizer = torch.optim.AdamW(
-        #        parameters, lr=args.learning_rate, betas=(0.95, 0.999), weight_decay=0,
-        #        )
-        #optimizer = torch.optim.RMSprop(parameters, lr=args.learning_rate)
-
-        # def zero_one_loss_prime(x, targets):
-            # ''' x: BxC
-            # targets: Bx1
-
-            # returns: err of size 1
-            # '''
-            # return  (x.argmax(axis=1)!=targets).float().mean(axis=0)
 
         def zero_one_loss(x, targets):
             ''' x: BxC
@@ -1084,7 +1024,7 @@ if __name__ == '__main__':
 
         #sets = ['train', 'test']
         N_L = utils.count_hidden_layers(model)
-        layers = np.arange(1, N_L+1)#classifier.n_layers)  # the different layers, forward order
+        layers = np.arange(0, N_L+1)#classifier.n_layers)  # the different layers, forward order
         #log_mult = np.arange(1, N_L+1)
         stats = ['loss', 'error']
         #tries = np.arange(1, 1+args.ntry)  # the different tries
@@ -1099,6 +1039,14 @@ if __name__ == '__main__':
         quant.sort_index(axis=1, inplace=True)  # sort for quicker access
 
         df_mult = pd.DataFrame(columns=[layers], index=index, dtype=float)
+
+        if "quant" in checkpoint.keys():
+            quant.update(checkpoint["quant"])
+
+        if "df_mult" in checkpoint.keys():
+            df_mult.update(checkpoint["df_mult"])
+
+        t_start = len(quant.dropna().index) + 1
 
         #if 'quant' in checkpoint.keys():
         #    quant.update(checkpoint['quant'])
@@ -1231,20 +1179,23 @@ if __name__ == '__main__':
 
 
 
-        loss_0, error_0 = eval_epoch(model, train_loader)  # original loss and error of the model
-        loss_test, error_test = eval_epoch(model, test_loader)
-        print(f'Train loss: {loss_0}, error: {error_0}', file=logs, flush=True)
-        #stats_0 = pd.DataFrame(columns=['loss', 'error'])
-        #stats_0['loss'] = loss_0
-        #stats_0['error'] = error_0
-        #stats_0.to_csv(os.path.join(path_output, 'original.csv'))
-        Idx = pd.IndexSlice
-        quant.loc[1, Idx[0, 'loss', 'train']] = loss_0
-        quant.loc[1, Idx[0, 'error', 'train']] = error_0
+        fn_quant = os.path.join(path_output, "quant.csv")
+        if t_start == 1 or quant.loc[1, Idx[0, :, :]].dropna().empty:
+            loss_0, error_0 = eval_epoch(model, train_loader)  # original loss and error of the model
+            loss_test, error_test = eval_epoch(model, test_loader)
+            print(f'Train loss: {loss_0}, error: {error_0}', file=logs, flush=True)
+            #stats_0 = pd.DataFrame(columns=['loss', 'error'])
+            #stats_0['loss'] = loss_0
+            #stats_0['error'] = error_0
+            #stats_0.to_csv(os.path.join(path_output, 'original.csv'))
+            Idx = pd.IndexSlice
+            quant.loc[1, Idx[0, 'loss', 'train']] = loss_0
+            quant.loc[1, Idx[0, 'error', 'train']] = error_0
 
-        quant.loc[1, Idx[0, 'loss', 'test']] = loss_test
-        quant.loc[1, Idx[0, 'error', 'test']] = error_test
-        print(f'Test loss: {loss_test}, error: {error_test}', file=logs, flush=True)
+            quant.loc[1, Idx[0, 'loss', 'test']] = loss_test
+            quant.loc[1, Idx[0, 'error', 'test']] = error_test
+            print(f'Test loss: {loss_test}, error: {error_test}', file=logs, flush=True)
+
 
         def get_output_class(classifier, loader):
             out = torch.empty((len(loader), loader.batch_size, classifier.n_classes))
@@ -1288,8 +1239,10 @@ if __name__ == '__main__':
                 return loss_tot, err_tot
 
         #mult = 2**args.log_mult
+
+
         loss_min = N_L*[None]
-        for t in range(1, args.steps+1):
+        for t in range(t_start, args.steps+1):
             for l in range(N_L, 0, -1):
 
                 # def eval_mult(mult):
@@ -1318,10 +1271,10 @@ if __name__ == '__main__':
                 mult = 1.
                 classifier = PrunedClassifier(model,l,mult, keep).to(device)
                 classifier.requires_grad_(False)
-                if is_vgg and torch.cuda.device_count() > 1:
-                    print("Let's use", torch.cuda.device_count(), "GPUs!", file=logs, flush=True)
-                    # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
-                    classifier.features = nn.DataParallel(classifier.features)
+                # if is_vgg and torch.cuda.device_count() > 1:
+                    # print("Let's use", torch.cuda.device_count(), "GPUs!", file=logs, flush=True)
+                    # # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
+                    # classifier.features = nn.DataParallel(classifier.features)
                 out_class = get_output_class(classifier, train_loader)
 
 

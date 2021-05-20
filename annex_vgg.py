@@ -122,6 +122,7 @@ if __name__ == '__main__':
     #np.random.seed(seed)
     #random.seed(seed)
 
+
     start_id_draw = checkpoint.get('draws', 0) + 1
     start_epoch = checkpoint.get('epochs', 0)
 
@@ -726,6 +727,12 @@ if __name__ == '__main__':
 
                 plt.close('all')
                 save_checkpoint()
+
+                if epoch == 5 and id_draw > 1:
+                    fn_prev_chkpt = os.path.join(path_output, "checkpoint_draw_{}.pth".format(id_draw-1))
+                    if os.path.isfile(fn_prev_chkpt):
+                        os.remove(fn_prev_chkpt)
+
 
 
 

@@ -656,7 +656,7 @@ if __name__ == '__main__':
 
                 df_merge.sort_index(axis=1, inplace=True)
                 try:
-                    process_df(df_merge, dname, stats_ref, args_model=args_model)
+                    process_df(df_merge, dname, stats_ref, args_model=args_model, save=True)
                 except RuntimeError as e:
                     print(f"error {e} processing {dname}")
 
