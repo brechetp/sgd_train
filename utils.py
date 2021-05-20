@@ -139,7 +139,7 @@ def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=False,
 
     elif dataset.lower() == 'mnist':
 
-        train_dataset = MNIST(dataroot, train=True, transform=transform, download=True, shuffle=False)
+        train_dataset = MNIST(dataroot, train=True, transform=transform, download=True)
         valid_dataset = train_dataset
         test_dataset = MNIST(dataroot, train=False, transform=transform, download=True)
 

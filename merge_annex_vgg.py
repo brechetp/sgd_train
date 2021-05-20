@@ -559,7 +559,11 @@ if __name__ == '__main__':
                     name = os.path.basename(f).split('.')[0]
 
                     #idx_draw = int(name.split('_')[-1])
-                    chkpt = torch.load(f, map_location=device)
+                    try:
+                        chkpt = torch.load(f, map_location=device)
+                    except:
+                        print("Could not load ", f)
+                        continue
                     quant = chkpt['quant'].sort_index(axis=1).loc[:, Idx[:, :, :n_draws]]
                     # max_epoch = len(quant.dropna(how='all'))
                     if "val" in quant.columns.get_level_values("set"):
