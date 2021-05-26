@@ -471,7 +471,7 @@ def process_csv(file_csv):
 
     # train_loader, size_train,\
         # val_loader, size_val,\
-        # test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset, batch_size =args.batch_size, ss_factor=1, size_max=args.size_max, collate_fn=None, pin_memory=False)
+        # test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset, batch_size =args.batch_size, ss_factor=1, size_max=args.size_max, collate_fn=None, pin_memory=True)
     # classifier = utils.parse_archi(log_fname)
     # loss_test, err_test = eval_epoch(model, test_loader)
     # quant.columns.name = add_sets
@@ -597,7 +597,11 @@ if __name__ == '__main__':
         #entries = glob.glob(os.path.join(root, "entry_*"), recursive=False)
 
         for f in models:
-            model = torch.load(f, map_location=device)
+            try:
+                model = torch.load(f, map_location=device)
+            except:
+                print("Can't load model ", f)
+                continue
             try:
                 quant_model = model["quant"].dropna().drop("val", axis=1, level="set", errors="ignore")
             except:

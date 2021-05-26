@@ -155,8 +155,8 @@ def get_dataset(dataset='mnist', dataroot='data/', imresize=None, augment=False,
 
 
 def get_dataloader(train_dataset, valid_dataset, test_dataset, batch_size,
-                  size_max=None, collate_fn=None, num_workers=4,
-                   pin_memory=False):
+                  size_max=None, collate_fn=None, num_workers=1,
+                   pin_memory=True):
     '''ss_factor: for the valid set'''
 
     #indices = torch.randperm(len(train_dataset))

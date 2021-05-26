@@ -183,7 +183,7 @@ if __name__ == '__main__':
                                                        =args.batch_size,
                                                        size_max=args.size_max,
                                                        collate_fn=None,
-                                                       pin_memory=False)
+                                                       pin_memory=True)
 
     #model = models.cnn.CNN(1)
 

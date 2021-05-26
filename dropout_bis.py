@@ -876,7 +876,7 @@ if __name__ == '__main__':
                                                                size_max=args_model.size_max,
                                                                collate_fn=None,
                                                                pin_memory=True,
-                                                               num_workers=4)
+                                                               num_workers=1)
             if not args.reset_random:
                 try:
                     new_keys = map(lambda x:x.replace('module.', ''), checkpoint_model['model'].keys())

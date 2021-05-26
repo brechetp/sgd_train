@@ -200,7 +200,7 @@ if __name__ == '__main__':
     train_loader, size_train,\
         val_loader, size_val,\
         test_loader, size_test  = utils.get_dataloader( train_dataset, valid_dataset, test_dataset,
-                                                       batch_size =args.batch_size, num_workers=4,
+                                                       batch_size =args.batch_size, num_workers=1,
                                                        size_max=args.size_max, collate_fn=None, pin_memory=True)
 
     #model = models.cnn.CNN(1)

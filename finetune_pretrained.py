@@ -173,7 +173,7 @@ if __name__ == '__main__':
         val_loader, size_val,\
         test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset,
                                                        batch_size =args.batch_size, ss_factor=0.8,
-                                                       size_max=args.size_max, collate_fn=None, pin_memory=False)
+                                                       size_max=args.size_max, collate_fn=None, pin_memory=True)
 
     #model = models.cnn.CNN(1)
 

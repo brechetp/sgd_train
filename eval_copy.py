@@ -885,7 +885,7 @@ if __name__ == '__main__':
                                                             size_max=args_model.size_max,
                                                             collate_fn=None,
                                                             pin_memory=True,
-                                                            num_workers=4)
+                                                            num_workers=1)
         if not args.reset_random:
             try:
                 new_keys = map(lambda x:x.replace('module.', ''), checkpoint_model['model'].keys())
@@ -1180,6 +1180,7 @@ if __name__ == '__main__':
 
 
         fn_quant = os.path.join(path_output, "quant.csv")
+        Idx = pd.IndexSlice
         if t_start == 1 or quant.loc[1, Idx[0, :, :]].dropna().empty:
             loss_0, error_0 = eval_epoch(model, train_loader)  # original loss and error of the model
             loss_test, error_test = eval_epoch(model, test_loader)

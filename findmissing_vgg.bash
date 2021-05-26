@@ -1,15 +1,15 @@
 
-[ -z $max_run ] && max_run=3;
+[ -z $max_run ] && max_run=1;
 tp_dir='slurm/scripts'
-template='template.sbatch'
-sbname="ctv"
+template='template_v100.sbatch'
+sbname="ctcv"
 fname="$tp_dir/$sbname.sbatch"
 cp "$tp_dir/$template" $fname
 root=$1  # results/cifar10/210409/L-2
 missing_file="missing_nets"
 name="f2"
 f=2
-for var in `seq 1 4`; do
+for var in 5; do
     dir=$root/var-$var/$name
     model=$root/var-$var/checkpoint.pth
     for el in `seq 0 10`; do
@@ -19,7 +19,7 @@ for var in `seq 1 4`; do
             echo "#srun python annex_vgg.py --model $model --fraction $f --entry_layer $el --name $name --draws 20 -lrm manual -lr 0.002 -lrs 0  --nepochs 1000 ">> $fname; 
         else  # some draws exist
             #for dn in `seq 1 20`; do  # record the draw index to the file
-            let n=`ls $dir/entry_$el | grep checkpoint | wc -l`
+            let n=`ls $dir/entry_$el | grep checkpoint_ | cut -d'_' -f3 | cut -d'.' -f1 | sort -n | tail -n 1`
             if (( $n == 0 )); then   # could be that there is only logs.txt
                 echo "#srun python annex_vgg.py --model $model --fraction $f --entry_layer $el --name $name --draws 20 -lrm manual -lr 0.002 -lrs 0  --nepochs 1000 ">> $fname; 
             else

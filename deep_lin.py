@@ -129,7 +129,7 @@ if __name__ == '__main__':
                                                        ss_factor=1,
                                                        size_max=args.size_max,
                                                        collate_fn=None,
-                                                       pin_memory=False)
+                                                       pin_memory=True)
 
 
 

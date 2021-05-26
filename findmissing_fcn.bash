@@ -1,22 +1,27 @@
 [ -z $max_run ] && max_run=1;
 tp_dir='slurm/scripts'
-template='template.sbatch'
-sbname="amw2"
+template='template_v100.sbatch'
+sbname="amw"
 fname="$tp_dir/$sbname.sbatch"
 cp "$tp_dir/$template" $fname
 #root=$1  # results/cifar10/210409/L-2
 missing_file="missing_nets"
-name="f2-lr-1e-2"
+name="f2"
 models=$@
+#lr=0.05
 f=2
 #for var in `seq 1 5`; do
 for model in $models; do
     dir=`dirname $model`/$name
     fn_log_model="`dirname $model`/logs.txt"
-    lr=`sed -n 's/.*lr: \([0-9.]*\)$/\1/p' $fn_log_model`  # the previous learning rate
+    if [ ! -f "$fn_log_model" ]; then
+        echo "$fn_log_model does not exist. Skipping..."
+        continue;
+    fi
+    lr=`sed -n 's/^learning_rate= \([0-9.]*\)$/\1/p' $fn_log_model`  # the previous learning rate
     #model=$root/var-$var/checkpoint.pth
     for el in `seq 0 2`; do
-        #(( $el == 0 )) && lr=0.01 || lr=0.01
+        #(( $el == 0 )) && lr=0.001 || lr=0.005
         #lr=0.0005
         file=$dir/checkpoint_entry_$el.pth
         #echo $file
@@ -29,10 +34,12 @@ for model in $models; do
                 #for dn in `seq 1 20`; do  # record the draw index to the file
                 let l=`wc -l $fn_log | cut -d' ' -f1`
                 #(( $l < 100 )) && echo $fn_log
-                let n=`(( $l < 100 )) && echo $l || tail -n 2 $fn_log | head -n 1 | cut -d' ' -f2 | cut -d',' -f1` 
-                lr_prev=`sed -n 's/.*lr: \([0-9.]*\)$/\1/p' $fn_log`  # the previous learning rate
+
+                let n=`(( $l < 100 )) && echo $l || sed -n "s/^ep \([0-9]\+\).*/\1/p" $fn_log | tail -n 1`
+                #let n=3
+                lr_prev=`sed -n 's/^learning_rate= \([0-9.]*\)$/\1/p' $fn_log_model`  # the previous learning rate
                 if (( $(echo "$lr_prev != $lr" | bc -l) )); then  # not the correct learning rate
-                    ##echo $lr_prev $lr
+                    echo $lr_prev $lr
                     echo "#srun python check_seq.py --model $model --fraction $f --entry_layer $el --name $name  -lr $lr -lrs 0  --min_epochs 100 --nepochs 400 ">> $fname; 
                 else
                 #echo $n
@@ -51,25 +58,26 @@ done;
 cat $fname;
 
 
+if (( $max_run > 0 )); then
+    nexp=`grep srun $fname  | wc -l`  # the number of experiments in the file
+    total=`wc -l < $fname`  # the total number of lines
 
-#nexp=`grep srun $fname  | wc -l`  # the number of experiments in the file
-#total=`wc -l < $fname`  # the total number of lines
 
+    let beg=$total-$nexp+1
+    let i=$beg
 
-#let beg=$total-$nexp+1
-#let i=$beg
+    let blocks=($nexp - 1)/$max_run+1
 
-#let blocks=($nexp - 1)/$max_run+1
-
-#for bcnt in `seq 1 $blocks`; do
-#sed -i "s/^\(#SBATCH -J\) .*$/\1 $sbname-$bcnt/" $fname
-#sed -i "s%^\(#SBATCH -o .*/\).*%\1/$sbname-$bcnt.out%" $fname
-#sed -i "s%^\(#SBATCH -e .*/\).*%\1/$sbname-$bcnt.err%" $fname
-#sed -i "$i,`expr $i + $max_run - 1`s/^#*//" $fname
-#sbatch $fname
-#sleep 1
-#sed -i "$i,`expr $i + $max_run - 1`s/^/#/" $fname
-#let i=$i+$max_run
-#done;
-#sed -i "`expr $i - $max_run + 1`,${i}s/^#*//" $fname
+    for bcnt in `seq 1 $blocks`; do
+        sed -i "s/^\(#SBATCH -J\) .*$/\1 $sbname-$bcnt/" $fname
+        sed -i "s%^\(#SBATCH -o .*/\).*%\1/$sbname-$bcnt.out%" $fname
+        sed -i "s%^\(#SBATCH -e .*/\).*%\1/$sbname-$bcnt.err%" $fname
+        sed -i "$i,`expr $i + $max_run - 1`s/^#*//" $fname
+        sbatch $fname
+        #sleep 1
+        sed -i "$i,`expr $i + $max_run - 1`s/^/#/" $fname
+        let i=$i+$max_run
+    done;
+    sed -i "`expr $i - $max_run + 1`,${i}s/^#*//" $fname
+fi
 

@@ -348,7 +348,7 @@ if __name__ == '__main__':
 
         train_loader, size_train,\
             val_loader, size_val,\
-            test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset, batch_size =args.batch_size, ss_factor=1, size_max=args.size_max, collate_fn=None, pin_memory=False)
+            test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset, batch_size =args.batch_size, ss_factor=1, size_max=args.size_max, collate_fn=None, pin_memory=True)
 
         num_classes = len(train_dataset.classes) if args.dataset != 'svhn' else 10
         imsize = next(iter(train_loader))[0].size()[1:]
@@ -407,7 +407,7 @@ if __name__ == '__main__':
 
         train_loader, size_train,\
             val_loader, size_val,\
-            test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset, batch_size =args_model.batch_size, ss_factor=1, size_max=args_model.size_max, collate_fn=None, pin_memory=False)
+            test_loader, size_test  = utils.get_dataloader( train_dataset, test_dataset, batch_size =args_model.batch_size, ss_factor=1, size_max=args_model.size_max, collate_fn=None, pin_memory=True)
 
         archi = utils.parse_archi(log_fname)
         model = utils.construct_FCN(archi)

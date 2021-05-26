@@ -559,7 +559,7 @@ if __name__ == "__main__":
                                                        =args_model.batch_size,
                                                        size_max=None, #args_model.size_max,
                                                        collate_fn=None,
-                                                       pin_memory=False)
+                                                       pin_memory=True)
     paths = dict()
     models = dict()
     quant_ref = pd.DataFrame()

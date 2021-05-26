@@ -184,7 +184,7 @@ if __name__ == '__main__':
                                                        test_dataset, batch_size =args.batch_size,
                                                        #ss_factor=(1-args.fract_val),
                                                        size_max=args.size_max,
-                                                       num_workers=4,
+                                                       num_workers=1,
                                                        pin_memory=True,
                                                        collate_fn=None)
 
