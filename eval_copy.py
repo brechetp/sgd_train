@@ -846,7 +846,7 @@ if __name__ == '__main__':
             args.name += '_reset'
         if args.optim_mult:
             args.name += '_optim-mult'
-        path_output = os.path.join(args_model.output_root, args_model.name, args.name)
+        path_output = os.path.join(os.path.dirname(args.model), args.name)
 
         if hasattr(args_model, 'model') and args_model.model.find('vgg') != -1:
             is_vgg=True
